@@ -1,10 +1,10 @@
 # Souza Lab Loop — Source of Truth
 
 **Baseline date:** 2026-09-27
-**Status:** Phase 0 baseline recorded; Phase 1 discovery complete; owner gate pending.
-**Current phase:** Phase 1 — Recompra Loop Discovery.
+**Status:** Documentation baseline accepted; B0 contracts PASS; B1 Markdown adapter in progress.
+**Current phase:** Phase 2 — Loop Base v0 implementation (B0–B7).
 
-This document is the canonical roadmap and governance record for building a reusable development Loop in Souza Lab. It records the phase order, current evidence, decisions, and boundaries. It does not authorize implementation beyond the current phase.
+This document is the canonical roadmap and governance record for building a reusable development Loop in Souza Lab. It records the phase order, current evidence, decisions, and boundaries. The owner accepted baseline commit `e20e9f327f6b67bf62ca05b53c4185013f910b0b` and authorized implementation through B7; no additional planning gate is required between stages.
 
 ## Mission and evidence boundary
 
@@ -28,19 +28,21 @@ The detailed discovery report is the evidence record for Phase 1. Facts from rep
 
 ## Phase sequence
 
-Phases proceed in order. The owner gate must be explicitly passed before Phase 2. Later phases remain proposals until their preceding gate is accepted.
+The owner gate for implementation was passed after the accepted baseline commit. B0–B7 proceed in order without per-stage owner approval. A phase is complete only when its implementation exists and its required tests pass.
 
 | Phase | Name | Status | Exit condition |
 |---|---|---|---|
-| 0 | Canonical baseline | Recorded in this document | This source-of-truth document is committed as the Souza Lab baseline. |
-| 1 | Recompra Loop Discovery | Discovery complete; awaiting owner review | Owner reviews the evidence-based report and explicitly authorizes Phase 2. |
-| — | Owner gate | Pending | Explicit owner authorization after reviewing Phase 1 findings and the Phase 2 proposal. |
-| 2 | Loop Base v0 | Not started | Implement only the approved, evidence-backed reusable architecture in Souza Lab. |
-| 3 | Microtest 001 | Not started | Owner-authorized test demonstrates the approved lifecycle using isolated fixtures/adapters. |
-| 4 | Failure → correction → retest | Not started | Record each failure, fix its cause, and retest against explicit acceptance evidence. |
-| 5 | Reliability baseline | Not started | Define and demonstrate reliability criteria from measured results; no narrative-only pass. |
-| 6 | Loop executes Souza Lab real work | Not started | Owner authorizes real task execution after the reliability gate is met. |
-| 7 | RCC adoption | Not started | Owner decides adoption based on the demonstrated Souza Lab results. |
+| 0 | Canonical baseline | Accepted at `e20e9f3` | Baseline document committed and pushed. |
+| 1 | Recompra Loop Discovery | Complete | Discovery evidence delivered; Recompra remains read-only. |
+| — | Owner gate | Passed | Owner accepted the baseline and explicitly authorized implementation through B7. |
+| B0 | Contracts | PASS | Provider-neutral interfaces, canonical structures, closed states, and contract tests pass. |
+| B1 | Markdown Task Adapter | In progress | Parse tasks, acceptance criteria, and dependencies into canonical structures; prove deterministic resolution. |
+| B2 | Local Git Adapter | Not started | Read local revision and working-tree facts through `GitProvider`. |
+| B3 | Computed State Engine | Not started | Derive state from authoritative facts; projections and narrative cannot override it. |
+| B4 | Evidence Store | Not started | Append and read validated evidence events without update/delete operations. |
+| B5 | Fake Providers | Not started | Exercise all provider boundaries with deterministic fixtures and no external services. |
+| B6 | Recovery | Not started | Reconstruct the first unproved step from task/Git/CI/validation/review/merge facts. |
+| B7 | Synthetic Microtest 001 | Not started | Execute the full architecture and pass all eight required test cases. |
 
 ## Phase 1 evidence snapshot
 
@@ -85,14 +87,14 @@ TASK
 → HANDOFF / NEXT TASK
 ```
 
-Phase 2 should preserve the proven properties—dependency-based task resolution, exact-revision validation and review, fail-closed gates, append-only evidence, post-merge validation, and resumable waits—while changing project-specific Markdown/GitHub assumptions into replaceable adapters. Computed state must be checked against persisted projections. The owner must review the concrete Phase 2 architecture before implementation begins.
+Loop Base v0 preserves the proven properties—dependency-based task resolution, exact-revision validation and review, fail-closed gates, append-only evidence, post-merge validation, and resumable waits—while changing project-specific Markdown/GitHub assumptions into replaceable adapters. Computed state must be checked against persisted projections. Implementation follows the approved B0–B7 sequence.
 
 The exact task-system adapter, execution runtime, reviewer/validator providers, durable wakeup mechanism, and server-side merge enforcement remain open decisions. They must not be silently settled by implementation.
 
 ## Microtest boundary
 
-Microtest 001 is **not started**. The discovery proposal is an isolated synthetic lifecycle test with deterministic fake adapters and no RecompraCRM files, credentials, GitHub writes, model calls, or deployment. It should exercise both the passing path and key rejection paths, including missing/stale validation, non-independent or stale review, unresolved findings, bad state pointers that agree with each other, and interruption recovery. Its exact acceptance criteria and implementation require owner authorization after review of the Phase 2 design.
+Microtest 001 is **not started** and is authorized as B7. It will use isolated synthetic facts and deterministic fake providers, with no RecompraCRM files, credentials, GitHub writes, model calls, or deployment. It must execute all eight cases from the owner directive, including the valid path and rejection/recovery cases. Its executable results, not this description, determine PASS.
 
 ## Change control
 
-Update this document when the owner changes phase order, accepts a gate, resolves an open decision, or corrects a factual claim. Record evidence for completed phase gates. Do not mark a phase complete based only on an agent's summary. Until the owner gate is passed, Phase 2 implementation and Microtest 001 remain unauthorized.
+Update this document when the owner changes phase order, accepts a gate, resolves an open decision, or corrects a factual claim. Record evidence for completed phase gates. Do not mark a phase complete based only on an agent's summary. The owner gate is passed; continue through B7 unless a genuine hard blocker occurs.

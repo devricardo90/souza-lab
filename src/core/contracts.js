@@ -1,0 +1,265 @@
+/**
+ * Runtime contracts for the provider-neutral Loop core.
+ * Providers exchange only these structures; adapters own external formats.
+ */
+
+export const LOOP_STATES = Object.freeze([
+  "DISCOVER",
+  "SPEC_REQUIRED",
+  "SPEC_REVIEW",
+  "READY_TO_IMPLEMENT",
+  "IMPLEMENTING",
+  "TESTING",
+  "VALIDATING",
+  "REVIEWING",
+  "READY_TO_MERGE",
+  "MERGING",
+  "POST_MERGE_VALIDATION",
+  "DONE",
+  "WAIT_RETRYABLE",
+  "BLOCKED_OWNER",
+  "BLOCKED_EXTERNAL",
+  "INCONSISTENT_STATE",
+]);
+
+export const EVIDENCE_EVENT_TYPES = Object.freeze([
+  "TASK_SELECTED",
+  "SPEC_REVIEWED",
+  "REVISION_OBSERVED",
+  "CI_RECORDED",
+  "VALIDATION_RECORDED",
+  "REVIEW_RECORDED",
+  "MERGE_RECORDED",
+  "POST_MERGE_VALIDATION_RECORDED",
+  "STATE_COMPUTED",
+  "RECOVERY_COMPUTED",
+]);
+
+const ENUMS = Object.freeze({
+  CI_STATUS: ["PASS", "FAIL", "PENDING", "UNKNOWN"],
+  REVIEW_VERDICT: ["CLEAN", "FINDINGS", "PENDING", "UNKNOWN"],
+  VALIDATION_RESULT: ["PASS", "FAIL", "PENDING", "UNKNOWN"],
+});
+
+export class ContractError extends TypeError {
+  constructor(path, message) {
+    super(`${path}: ${message}`);
+    this.name = "ContractError";
+    this.path = path;
+  }
+}
+
+function record(value, path) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ContractError(path, "must be an object");
+  }
+  return value;
+}
+
+function nonEmptyString(value, path) {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new ContractError(path, "must be a non-empty string");
+  }
+  return value.trim();
+}
+
+function isoTimestamp(value, path) {
+  const timestamp = nonEmptyString(value, path);
+  if (!/^\d{4}-\d\d-\d\dT/.test(timestamp) || !Number.isFinite(Date.parse(timestamp))) {
+    throw new ContractError(path, "must be an ISO timestamp");
+  }
+  return timestamp;
+}
+
+function enumValue(value, choices, path) {
+  if (!choices.includes(value)) {
+    throw new ContractError(path, `must be one of: ${choices.join(", ")}`);
+  }
+  return value;
+}
+
+function stringArray(value, path) {
+  if (!Array.isArray(value)) throw new ContractError(path, "must be an array");
+  return value.map((item, index) => nonEmptyString(item, `${path}[${index}]`));
+}
+
+function objectArray(value, factory, path) {
+  if (!Array.isArray(value)) throw new ContractError(path, "must be an array");
+  return value.map((item, index) => factory(item, `${path}[${index}]`));
+}
+
+export function makeAcceptanceCriterion(input, path = "AcceptanceCriterion") {
+  const value = record(input, path);
+  return Object.freeze({
+    id: nonEmptyString(value.id, `${path}.id`),
+    description: nonEmptyString(value.description, `${path}.description`),
+  });
+}
+
+export function makeDependency(input, path = "Dependency") {
+  const value = record(input, path);
+  return Object.freeze({
+    taskId: nonEmptyString(value.taskId, `${path}.taskId`),
+    requiresDone: value.requiresDone === undefined ? true : Boolean(value.requiresDone),
+  });
+}
+
+export function makeTask(input, path = "Task") {
+  const value = record(input, path);
+  const acceptanceCriteria = objectArray(value.acceptanceCriteria, makeAcceptanceCriterion, `${path}.acceptanceCriteria`);
+  const dependencies = objectArray(value.dependencies, makeDependency, `${path}.dependencies`);
+  const criterionIds = acceptanceCriteria.map(({ id }) => id);
+  if (new Set(criterionIds).size !== criterionIds.length) {
+    throw new ContractError(`${path}.acceptanceCriteria`, "criterion ids must be unique within a task");
+  }
+  return Object.freeze({
+    id: nonEmptyString(value.id, `${path}.id`),
+    title: nonEmptyString(value.title, `${path}.title`),
+    acceptanceCriteria: Object.freeze(acceptanceCriteria),
+    dependencies: Object.freeze(dependencies),
+    completed: Boolean(value.completed),
+    specPresent: Boolean(value.specPresent),
+    specReviewed: Boolean(value.specReviewed),
+  });
+}
+
+export function makeRevision(input, path = "Revision") {
+  const value = record(input, path);
+  const head = nonEmptyString(value.head, `${path}.head`);
+  if (!/^[0-9a-f]{7,64}$/i.test(head)) throw new ContractError(`${path}.head`, "must be a Git object id");
+  const base = value.base == null ? null : nonEmptyString(value.base, `${path}.base`);
+  if (base !== null && !/^[0-9a-f]{7,64}$/i.test(base)) throw new ContractError(`${path}.base`, "must be a Git object id");
+  return Object.freeze({
+    head,
+    base,
+    branch: value.branch == null ? null : nonEmptyString(value.branch, `${path}.branch`),
+    dirty: Boolean(value.dirty),
+    changedFiles: Object.freeze(stringArray(value.changedFiles ?? [], `${path}.changedFiles`)),
+  });
+}
+
+export function makeCIResult(input, path = "CIResult") {
+  const value = record(input, path);
+  return Object.freeze({
+    head: nonEmptyString(value.head, `${path}.head`),
+    status: enumValue(value.status, ENUMS.CI_STATUS, `${path}.status`),
+    checkedAt: value.checkedAt == null ? null : isoTimestamp(value.checkedAt, `${path}.checkedAt`),
+    runId: value.runId == null ? null : nonEmptyString(value.runId, `${path}.runId`),
+  });
+}
+
+export function makeReviewResult(input, path = "ReviewResult") {
+  const value = record(input, path);
+  return Object.freeze({
+    head: nonEmptyString(value.head, `${path}.head`),
+    verdict: enumValue(value.verdict, ENUMS.REVIEW_VERDICT, `${path}.verdict`),
+    independent: Boolean(value.independent),
+    unresolvedFindings: Number.isInteger(value.unresolvedFindings) && value.unresolvedFindings >= 0
+      ? value.unresolvedFindings
+      : (() => { throw new ContractError(`${path}.unresolvedFindings`, "must be a non-negative integer"); })(),
+    publishedAt: value.publishedAt == null ? null : isoTimestamp(value.publishedAt, `${path}.publishedAt`),
+    reviewerId: value.reviewerId == null ? null : nonEmptyString(value.reviewerId, `${path}.reviewerId`),
+  });
+}
+
+export function makeValidationResult(input, path = "ValidationResult") {
+  const value = record(input, path);
+  const acProof = record(value.acProof, `${path}.acProof`);
+  const total = acProof.total;
+  const proved = acProof.proved;
+  if (!Number.isInteger(total) || total < 0 || !Number.isInteger(proved) || proved < 0 || proved > total) {
+    throw new ContractError(`${path}.acProof`, "total/proved must be valid non-negative criterion counts");
+  }
+  return Object.freeze({
+    head: nonEmptyString(value.head, `${path}.head`),
+    baseline: nonEmptyString(value.baseline, `${path}.baseline`),
+    specDigest: nonEmptyString(value.specDigest, `${path}.specDigest`),
+    result: enumValue(value.result, ENUMS.VALIDATION_RESULT, `${path}.result`),
+    acProof: Object.freeze({ total, proved }),
+    checkedAt: value.checkedAt == null ? null : isoTimestamp(value.checkedAt, `${path}.checkedAt`),
+    independent: Boolean(value.independent),
+  });
+}
+
+export function makeMergeFact(input, path = "MergeFact") {
+  const value = record(input, path);
+  const candidateHead = nonEmptyString(value.candidateHead, `${path}.candidateHead`);
+  const mergeCommit = value.mergeCommit == null ? null : nonEmptyString(value.mergeCommit, `${path}.mergeCommit`);
+  if (Boolean(value.merged) && !mergeCommit) throw new ContractError(`${path}.mergeCommit`, "is required when merged is true");
+  return Object.freeze({
+    merged: Boolean(value.merged),
+    candidateHead,
+    mergeCommit,
+    mergedAt: value.mergedAt == null ? null : isoTimestamp(value.mergedAt, `${path}.mergedAt`),
+  });
+}
+
+export function makeEvidenceEvent(input, path = "EvidenceEvent") {
+  const value = record(input, path);
+  const eventType = enumValue(value.eventType, EVIDENCE_EVENT_TYPES, `${path}.eventType`);
+  const payload = value.payload === undefined ? {} : record(value.payload, `${path}.payload`);
+  return Object.freeze({
+    schemaVersion: 1,
+    eventId: nonEmptyString(value.eventId, `${path}.eventId`),
+    eventType,
+    occurredAt: isoTimestamp(value.occurredAt, `${path}.occurredAt`),
+    taskId: value.taskId == null ? null : nonEmptyString(value.taskId, `${path}.taskId`),
+    revisionHead: value.revisionHead == null ? null : nonEmptyString(value.revisionHead, `${path}.revisionHead`),
+    payload: Object.freeze({ ...payload }),
+  });
+}
+
+export function makeComputedState(input, path = "ComputedState") {
+  const value = record(input, path);
+  const state = enumValue(value.state, LOOP_STATES, `${path}.state`);
+  const derivedState = value.derivedState == null ? state : enumValue(value.derivedState, LOOP_STATES, `${path}.derivedState`);
+  return Object.freeze({
+    state,
+    derivedState,
+    taskId: value.taskId == null ? null : nonEmptyString(value.taskId, `${path}.taskId`),
+    candidateHead: value.candidateHead == null ? null : nonEmptyString(value.candidateHead, `${path}.candidateHead`),
+    nextTaskId: value.nextTaskId == null ? null : nonEmptyString(value.nextTaskId, `${path}.nextTaskId`),
+    blockers: Object.freeze(stringArray(value.blockers ?? [], `${path}.blockers`)),
+    computedAt: isoTimestamp(value.computedAt, `${path}.computedAt`),
+  });
+}
+
+class ProviderContract {
+  notImplemented(method) {
+    throw new Error(`${this.constructor.name}.${method} is not implemented`);
+  }
+}
+
+export class TaskSystemAdapter extends ProviderContract {
+  listTasks() { return this.notImplemented("listTasks"); }
+}
+
+export class GitProvider extends ProviderContract {
+  getRevision() { return this.notImplemented("getRevision"); }
+}
+
+export class SCMProvider extends ProviderContract {
+  getMergeFact() { return this.notImplemented("getMergeFact"); }
+}
+
+export class CIProvider extends ProviderContract {
+  getCIResult() { return this.notImplemented("getCIResult"); }
+}
+
+export class ReviewProvider extends ProviderContract {
+  getReviewResult() { return this.notImplemented("getReviewResult"); }
+}
+
+export class ValidationProvider extends ProviderContract {
+  getValidationResult() { return this.notImplemented("getValidationResult"); }
+}
+
+export class EvidenceStore extends ProviderContract {
+  append() { return this.notImplemented("append"); }
+  listByTask() { return this.notImplemented("listByTask"); }
+}
+
+export class StateEngine extends ProviderContract {
+  compute() { return this.notImplemented("compute"); }
+  recover() { return this.notImplemented("recover"); }
+}

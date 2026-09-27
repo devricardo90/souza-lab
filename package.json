@@ -1,0 +1,10 @@
+{
+  "name": "souza-lab-loop-base",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "test:contracts": "node --test tests/contracts.test.js"
+  }
+}
