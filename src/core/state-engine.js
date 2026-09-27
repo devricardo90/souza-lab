@@ -45,7 +45,8 @@ function cleanReview(review, head) {
     && review.verdict === "CLEAN"
     && review.independent === true
     && review.unresolvedFindings === 0
-    && review.publishedAt,
+    && typeof review.publishedAt === "string"
+    && Number.isFinite(Date.parse(review.publishedAt)),
   );
 }
 
@@ -78,11 +79,15 @@ function derive(facts = {}) {
   if (revision.dirty) return stateResult("IMPLEMENTING", ["working tree has uncommitted changes"]);
 
   const ci = facts.ci ?? null;
-  if (!ci || ci.status === "UNKNOWN" || ci.status === "FAIL") {
-    return stateResult("TESTING", [!ci ? "CI evidence is missing" : ci.status === "UNKNOWN" ? "CI result is unknown" : "CI failed"]);
-  }
+  if (!ci) return stateResult("TESTING", ["CI evidence is missing"]);
   if (ci.head !== revision.head) return stateResult("TESTING", ["CI evidence is stale for the candidate HEAD"]);
   if (ci.status === "PENDING") return stateResult("WAIT_RETRYABLE", ["CI is still running"]);
+  if (ci.status !== "PASS") {
+    const blocker = ci.status === "FAIL" ? "CI failed"
+      : ci.status === "UNKNOWN" ? "CI result is unknown"
+        : "CI status is unrecognized";
+    return stateResult("TESTING", [blocker]);
+  }
 
   const validation = facts.validation ?? null;
   const validationOkay = exactValidation(validation, {
@@ -116,7 +121,7 @@ function derive(facts = {}) {
     }
     const mergeTime = Date.parse(merge.mergedAt ?? "");
     const reviewTime = Date.parse(review.publishedAt);
-    if (!Number.isFinite(mergeTime) || reviewTime > mergeTime) {
+    if (!Number.isFinite(mergeTime) || reviewTime >= mergeTime) {
       return stateResult("INCONSISTENT_STATE", ["CLEAN exact-head review was not published before merge"]);
     }
     const postMergeValidation = facts.postMergeValidation ?? null;

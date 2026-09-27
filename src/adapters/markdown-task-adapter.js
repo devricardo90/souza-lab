@@ -59,10 +59,21 @@ export function parseTasksMarkdown(markdown) {
   const tasks = [];
   let draft = null;
   let inCriteria = false;
+  let fence = null;
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     const lineNumber = index + 1;
+    const fenceLine = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (fence) {
+      const closesFence = line.match(/^ {0,3}(`{3,}|~{3,})[ \t]*$/);
+      if (closesFence && closesFence[1][0] === fence.character && closesFence[1].length >= fence.length) fence = null;
+      continue;
+    }
+    if (fenceLine) {
+      fence = { character: fenceLine[1][0], length: fenceLine[1].length };
+      continue;
+    }
     if (/^- \[[ xX]\] /.test(line)) {
       finalizeTask(draft, tasks);
       const match = line.match(TASK_LINE);
@@ -121,6 +132,7 @@ export function parseTasksMarkdown(markdown) {
     inCriteria = false;
   }
 
+  if (fence) throw new TaskSourceError("unclosed Markdown code fence", "UNCLOSED_CODE_FENCE");
   finalizeTask(draft, tasks);
   validateDependencyGraph(tasks);
   return Object.freeze(tasks);

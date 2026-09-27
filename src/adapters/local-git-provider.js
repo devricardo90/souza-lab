@@ -15,6 +15,7 @@ function runGit(args, { cwd, git = "git" }) {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
       windowsHide: true,
     }).trimEnd();
   } catch (error) {

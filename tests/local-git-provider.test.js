@@ -35,8 +35,10 @@ test("local Git adapter reports root, HEAD, branch, base diff and dirty files wi
     writeFileSync(join(root, "new folder", "untracked.txt"), "untracked\n");
 
     const beforeConfig = readFileSync(join(root, ".git", "config"), "utf8");
+    const beforeIndex = readFileSync(join(root, ".git", "index"));
     const revision = new LocalGitProvider({ cwd: root, baseRef: "main" }).getRevision();
     const afterConfig = readFileSync(join(root, ".git", "config"), "utf8");
+    const afterIndex = readFileSync(join(root, ".git", "index"));
 
     assert.match(revision.head, /^[0-9a-f]{40}$/i);
     assert.equal(revision.base, baseline);
@@ -44,6 +46,7 @@ test("local Git adapter reports root, HEAD, branch, base diff and dirty files wi
     assert.equal(revision.dirty, true);
     assert.deepEqual(revision.changedFiles, ["new folder/untracked.txt", "tracked.txt"]);
     assert.equal(afterConfig, beforeConfig);
+    assert.deepEqual(afterIndex, beforeIndex);
     assert.doesNotMatch(afterConfig, /\[remote /);
   });
 });

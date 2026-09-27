@@ -49,6 +49,7 @@ test("computed state follows the first unproved stage and fails closed", () => {
   assert.equal(computeState({ ...facts(), revision: null }).state, "READY_TO_IMPLEMENT");
   assert.equal(computeState(facts({ revision: makeRevision({ ...REVISION, dirty: true }) })).state, "IMPLEMENTING");
   assert.equal(computeState(facts({ ci: null })).state, "TESTING");
+  assert.equal(computeState(facts({ ci: { head: REVISION.head, status: "GREEN" } })).state, "TESTING");
   assert.equal(computeState(facts({ ci: makeCIResult({ head: REVISION.head, status: "PENDING" }) })).state, "WAIT_RETRYABLE");
   assert.equal(computeState(facts({ ci: makeCIResult({ head: "ccccccc", status: "PASS" }) })).state, "TESTING");
   assert.equal(computeState(facts({ validation: null })).state, "VALIDATING");
@@ -80,6 +81,13 @@ test("DONE requires pre-merge exact-head review, complete validation and post-me
   const rejected = computeState(facts({ merge, review: lateReview, postMergeValidation }));
   assert.equal(rejected.state, "INCONSISTENT_STATE");
   assert.match(rejected.blockers.join(" "), /not published before merge/);
+  const simultaneousReview = makeReviewResult({
+    head: REVISION.head, verdict: "CLEAN", independent: true, unresolvedFindings: 0,
+    publishedAt: merge.mergedAt,
+  });
+  const equalityRejected = computeState(facts({ merge, review: simultaneousReview, postMergeValidation }));
+  assert.equal(equalityRejected.state, "INCONSISTENT_STATE");
+  assert.match(equalityRejected.blockers.join(" "), /not published before merge/);
   const noReview = computeState(facts({ merge, review: null, postMergeValidation }));
   assert.equal(noReview.state, "INCONSISTENT_STATE");
 });

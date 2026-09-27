@@ -75,3 +75,18 @@ test("invalid task rows, missing ACs, duplicate IDs, and malformed fields fail c
   assert.throws(() => parseTasksMarkdown(ROADMAP.replace("depends_on: none", "depends_on: TASK-002")), /dependency cycle/);
   assert.throws(() => parseTasksMarkdown(ROADMAP.replace("AC-01 — Next task is selected", "AC1 — Next task is selected")), /malformed acceptance criterion/);
 });
+
+test("task-shaped examples inside Markdown code fences cannot become executable tasks", () => {
+  const example = `# Task format example
+
+\`\`\`markdown
+- [ ] TASK-999 — Example only
+  - spec: reviewed
+  - depends_on: none
+  - acceptance_criteria:
+    - AC-01 — This is documentation
+\`\`\`
+`;
+  assert.deepEqual(parseTasksMarkdown(example), []);
+  assert.throws(() => parseTasksMarkdown("# Missing close\n\n\`\`\`markdown\n- [ ] TASK-999 — Example"), /unclosed Markdown code fence/);
+});
