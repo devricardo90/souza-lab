@@ -52,6 +52,7 @@ export class LocalGitProvider extends GitProvider {
     const root = this.execute(["rev-parse", "--show-toplevel"], { cwd: this.cwd, git: this.git });
     const head = this.execute(["rev-parse", "--verify", "HEAD^{commit}"], { cwd: root, git: this.git });
     const branch = this.execute(["branch", "--show-current"], { cwd: root, git: this.git }) || null;
+    const authorId = this.execute(["show", "-s", "--format=%ae", head], { cwd: root, git: this.git }) || null;
     const status = this.execute(["status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd: root, git: this.git });
     const workingPaths = porcelainPaths(status);
 
@@ -70,6 +71,7 @@ export class LocalGitProvider extends GitProvider {
       head,
       base,
       branch,
+      authorId,
       dirty: status.length > 0,
       changedFiles: [...new Set([...committedPaths, ...workingPaths])].sort(),
     });

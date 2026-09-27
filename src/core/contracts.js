@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 /**
  * Runtime contracts for the provider-neutral Loop core.
  * Providers exchange only these structures; adapters own external formats.
@@ -112,10 +114,17 @@ export function makeTask(input, path = "Task") {
   if (new Set(criterionIds).size !== criterionIds.length) {
     throw new ContractError(`${path}.acceptanceCriteria`, "criterion ids must be unique within a task");
   }
+  const canonicalCriteria = acceptanceCriteria
+    .map(({ id, description }) => ({ id, description }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+  const acceptanceCriteriaDigest = createHash("sha256")
+    .update(JSON.stringify(canonicalCriteria), "utf8")
+    .digest("hex");
   return Object.freeze({
     id: nonEmptyString(value.id, `${path}.id`),
     title: nonEmptyString(value.title, `${path}.title`),
     acceptanceCriteria: Object.freeze(acceptanceCriteria),
+    acceptanceCriteriaDigest,
     dependencies: Object.freeze(dependencies),
     completed: Boolean(value.completed),
     specPresent: Boolean(value.specPresent),
@@ -133,6 +142,7 @@ export function makeRevision(input, path = "Revision") {
     head,
     base,
     branch: value.branch == null ? null : nonEmptyString(value.branch, `${path}.branch`),
+    authorId: value.authorId == null ? null : nonEmptyString(value.authorId, `${path}.authorId`),
     dirty: Boolean(value.dirty),
     changedFiles: Object.freeze(stringArray(value.changedFiles ?? [], `${path}.changedFiles`)),
   });
@@ -174,6 +184,7 @@ export function makeValidationResult(input, path = "ValidationResult") {
     head: nonEmptyString(value.head, `${path}.head`),
     baseline: nonEmptyString(value.baseline, `${path}.baseline`),
     specDigest: nonEmptyString(value.specDigest, `${path}.specDigest`),
+    acceptanceCriteriaDigest: nonEmptyString(value.acceptanceCriteriaDigest, `${path}.acceptanceCriteriaDigest`),
     result: enumValue(value.result, ENUMS.VALIDATION_RESULT, `${path}.result`),
     acProof: Object.freeze({ total, proved }),
     checkedAt: value.checkedAt == null ? null : isoTimestamp(value.checkedAt, `${path}.checkedAt`),
@@ -224,6 +235,7 @@ export function makeComputedState(input, path = "ComputedState") {
     taskId: value.taskId == null ? null : nonEmptyString(value.taskId, `${path}.taskId`),
     candidateHead: value.candidateHead == null ? null : nonEmptyString(value.candidateHead, `${path}.candidateHead`),
     nextTaskId: value.nextTaskId == null ? null : nonEmptyString(value.nextTaskId, `${path}.nextTaskId`),
+    projectionMismatch: value.projectionMismatch === true,
     blockers: Object.freeze(stringArray(value.blockers ?? [], `${path}.blockers`)),
     computedAt: isoTimestamp(value.computedAt, `${path}.computedAt`),
   });
@@ -262,6 +274,7 @@ export class ValidationProvider extends ProviderContract {
 
 export class EvidenceStore extends ProviderContract {
   append() { return this.notImplemented("append"); }
+  getById() { return this.notImplemented("getById"); }
   listByTask() { return this.notImplemented("listByTask"); }
 }
 

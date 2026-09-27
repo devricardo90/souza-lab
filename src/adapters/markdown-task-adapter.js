@@ -120,7 +120,14 @@ export function parseTasksMarkdown(markdown) {
       inCriteria = false;
       continue;
     }
-    if (!draft || line.trim() === "") continue;
+    if (line.trim() === "") continue;
+    if (!draft) {
+      if (/^\s{2}-\s+(spec|depends_on|acceptance_criteria)\b/.test(line)
+        || /^\s{4}-\s+AC-/.test(line)) {
+        throw new TaskSourceError(`line ${lineNumber}: task field appears outside a task`, "ORPHAN_TASK_FIELD");
+      }
+      continue;
+    }
 
     const spec = line.match(/^\s{2}-\s+spec:\s*(missing|present|reviewed)\s*$/i);
     if (spec) {

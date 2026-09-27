@@ -95,4 +95,9 @@ export class JsonlEvidenceStore extends EvidenceStore {
     if (typeof taskId !== "string" || taskId.trim() === "") throw new TypeError("listByTask requires a task id");
     return Object.freeze(this.listAll().filter((event) => event.taskId === taskId));
   }
+
+  getById(eventId) {
+    if (typeof eventId !== "string" || eventId.trim() === "") throw new TypeError("getById requires an event id");
+    return this.readRecords().find(({ event }) => event.eventId === eventId)?.event ?? null;
+  }
 }

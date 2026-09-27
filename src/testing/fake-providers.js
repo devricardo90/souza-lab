@@ -112,6 +112,7 @@ export class FakeEvidenceStore extends EvidenceStore {
 
   listByTask(taskId) { return Object.freeze(this.#events.filter((event) => event.taskId === taskId)); }
   listAll() { return Object.freeze([...this.#events]); }
+  getById(eventId) { return this.#events.find((event) => event.eventId === eventId) ?? null; }
 }
 
 function deepFreeze(value) {

@@ -10,6 +10,24 @@ const REQUIRED_METHODS = Object.freeze({
   validationProvider: ["getValidationResult"],
 });
 
+function recoveryProjections(computed) {
+  const projection = Object.freeze({
+    state: computed.state,
+    derivedState: computed.derivedState,
+    taskId: computed.taskId,
+    candidateHead: computed.candidateHead,
+    nextTaskId: computed.nextTaskId,
+    computedAt: computed.computedAt,
+  });
+  return Object.freeze({ state: projection, handoff: projection });
+}
+
+function sameRecoveryEvent(existing, proposed) {
+  if (!existing) return false;
+  const withoutTime = ({ occurredAt: _occurredAt, ...event }) => JSON.stringify(event);
+  return withoutTime(existing) === withoutTime(proposed);
+}
+
 export class RecoveryError extends Error {
   constructor(message, code = "RECOVERY_ERROR") {
     super(message);
@@ -27,8 +45,9 @@ function assertProviders(providers) {
       }
     }
   }
-  if (providers.evidenceStore && typeof providers.evidenceStore.append !== "function") {
-    throw new RecoveryError("evidenceStore.append is required", "PROVIDER_CONTRACT_MISSING");
+  if (providers.evidenceStore && (typeof providers.evidenceStore.append !== "function"
+    || typeof providers.evidenceStore.getById !== "function")) {
+    throw new RecoveryError("evidenceStore.append/getById are required", "PROVIDER_CONTRACT_MISSING");
   }
 }
 
@@ -62,20 +81,32 @@ export class RecoveryCoordinator {
 
     if (!task) {
       const recovered = this.stateEngine.recover({ now });
-      const result = Object.freeze({ ...recovered, taskId: null, selection, nextTaskId: null });
+      const result = Object.freeze({ ...recovered, taskId: null, selection, nextTaskId: null, projections: recoveryProjections(recovered.computed) });
       return this.recordRecovery(result, { eventId, now, evidenceStore });
     }
 
-    const revision = gitProvider.getRevision();
     const completedTaskIds = tasks.filter((entry) => entry.completed).map((entry) => entry.id);
-    const specReview = specRevision ? reviewProvider.getReviewResult(specRevision.head) : null;
-    const ci = revision ? ciProvider.getCIResult(revision.head) : null;
-    const validation = revision ? validationProvider.getValidationResult(task.id, revision.head) : null;
-    const review = revision ? reviewProvider.getReviewResult(revision.head) : null;
-    const merge = revision ? scmProvider.getMergeFact(task.id, revision.head) : null;
-    const postMergeValidation = merge?.merged
-      ? validationProvider.getValidationResult(task.id, merge.mergeCommit)
-      : null;
+    let revision = null;
+    let specReview = null;
+    let ci = null;
+    let validation = null;
+    let review = null;
+    let merge = null;
+    let postMergeValidation = null;
+    let providerFailure = null;
+    try {
+      revision = gitProvider.getRevision();
+      specReview = specRevision ? reviewProvider.getReviewResult(specRevision.head) : null;
+      ci = revision ? ciProvider.getCIResult(revision.head) : null;
+      validation = revision ? validationProvider.getValidationResult(task.id, revision.head) : null;
+      review = revision ? reviewProvider.getReviewResult(revision.head) : null;
+      merge = revision ? scmProvider.getMergeFact(task.id, revision.head) : null;
+      postMergeValidation = merge?.merged
+        ? validationProvider.getValidationResult(task.id, merge.mergeCommit)
+        : null;
+    } catch (error) {
+      providerFailure = error;
+    }
 
     const facts = {
       task,
@@ -94,14 +125,28 @@ export class RecoveryCoordinator {
       narrativeClaim,
       now,
     };
-    let recovered = this.stateEngine.recover(facts);
+    let recovered = providerFailure
+      ? this.stateEngine.recover({
+        ...facts,
+        retryableWait: providerFailure.retryable === true,
+        externalBlocked: providerFailure.retryable !== true,
+      })
+      : this.stateEngine.recover(facts);
     let nextTaskId = null;
     if (recovered.computed.state === "DONE") {
       const next = taskSystem.resolveNextTask({ additionalCompletedIds: [task.id] });
       nextTaskId = next.taskId;
       recovered = this.stateEngine.recover({ ...facts, nextTaskId });
     }
-    const result = Object.freeze({ ...recovered, taskId: task.id, selection, nextTaskId, facts });
+    const result = Object.freeze({
+      ...recovered,
+      taskId: task.id,
+      selection,
+      nextTaskId,
+      facts,
+      providerFailure: providerFailure ? Object.freeze({ retryable: providerFailure.retryable === true }) : null,
+      projections: recoveryProjections(recovered.computed),
+    });
     return this.recordRecovery(result, { eventId, now, evidenceStore });
   }
 
@@ -125,7 +170,14 @@ export class RecoveryCoordinator {
         nextTaskId: result.nextTaskId,
       },
     });
+    const existing = evidenceStore.getById(eventId);
+    if (existing) {
+      if (!sameRecoveryEvent(existing, event)) {
+        throw new RecoveryError(`event id ${eventId} already records a different recovery`, "EVIDENCE_EVENT_ID_CONFLICT");
+      }
+      return Object.freeze({ ...result, evidenceEvent: existing, evidenceReused: true });
+    }
     evidenceStore.append(event);
-    return Object.freeze({ ...result, evidenceEvent: event });
+    return Object.freeze({ ...result, evidenceEvent: event, evidenceReused: false });
   }
 }
