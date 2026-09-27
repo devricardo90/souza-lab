@@ -184,7 +184,11 @@ export class MarkdownTaskAdapter extends TaskSystemAdapter {
     return parseTasksMarkdown(this.readFile(this.path, "utf8"));
   }
 
-  resolveNextTask() {
-    return resolveNextTask(this.listTasks());
+  resolveNextTask({ additionalCompletedIds = [] } = {}) {
+    const completed = new Set(additionalCompletedIds);
+    const tasks = this.listTasks().map((task) => completed.has(task.id) && !task.completed
+      ? makeTask({ ...task, completed: true })
+      : task);
+    return resolveNextTask(tasks);
   }
 }

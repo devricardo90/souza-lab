@@ -33,7 +33,13 @@ export class FakeTaskSystemAdapter extends TaskSystemAdapter {
   }
 
   listTasks() { return this.tasks; }
-  resolveNextTask() { return resolveNextTask(this.tasks); }
+  resolveNextTask({ additionalCompletedIds = [] } = {}) {
+    const completed = new Set(additionalCompletedIds);
+    const tasks = this.tasks.map((task) => completed.has(task.id) && !task.completed
+      ? makeTask({ ...task, completed: true })
+      : task);
+    return resolveNextTask(tasks);
+  }
 }
 
 export class FakeGitProvider extends GitProvider {

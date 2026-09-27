@@ -1,5 +1,24 @@
 import { LOOP_STATES, StateEngine, makeComputedState } from "./contracts.js";
 
+export const FIRST_UNPROVED_STEP = Object.freeze({
+  DISCOVER: "RESOLVE_TASK",
+  SPEC_REQUIRED: "WRITE_SPEC",
+  SPEC_REVIEW: "REVIEW_SPEC",
+  READY_TO_IMPLEMENT: "START_IMPLEMENTATION",
+  IMPLEMENTING: "CONTINUE_IMPLEMENTATION",
+  TESTING: "RUN_TESTS",
+  VALIDATING: "RUN_VALIDATION",
+  REVIEWING: "REQUEST_OR_CONTINUE_REVIEW",
+  READY_TO_MERGE: "MERGE",
+  MERGING: "RECONCILE_MERGE",
+  POST_MERGE_VALIDATION: "VALIDATE_MERGE",
+  DONE: "SELECT_NEXT_TASK",
+  WAIT_RETRYABLE: "RETRY_EXTERNAL",
+  BLOCKED_OWNER: "REQUEST_OWNER_DECISION",
+  BLOCKED_EXTERNAL: "RESOLVE_EXTERNAL_BLOCKER",
+  INCONSISTENT_STATE: "RECONCILE_INCONSISTENCY",
+});
+
 function stateResult(state, blockers = []) {
   return { state, blockers };
 }
@@ -169,5 +188,13 @@ export function computeState(facts = {}) {
 export class ComputedStateEngine extends StateEngine {
   compute(facts) {
     return computeState(facts);
+  }
+
+  recover(facts) {
+    const computed = this.compute(facts);
+    return Object.freeze({
+      computed,
+      firstUnprovedStep: FIRST_UNPROVED_STEP[computed.state],
+    });
   }
 }

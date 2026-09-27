@@ -237,6 +237,7 @@ class ProviderContract {
 
 export class TaskSystemAdapter extends ProviderContract {
   listTasks() { return this.notImplemented("listTasks"); }
+  resolveNextTask() { return this.notImplemented("resolveNextTask"); }
 }
 
 export class GitProvider extends ProviderContract {
