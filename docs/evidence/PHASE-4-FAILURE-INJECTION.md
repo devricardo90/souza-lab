@@ -1,9 +1,9 @@
 # Phase 4 — Failure Injection Evidence
 
-**Accepted Foundation baseline:** `bfc30fd3333ad5ff61366def7d5880ced5faebd9`  
-**Implementation HEAD audited:** `b2aabe5abe270d931ba9421085e956359595646d`  
-**Branch:** `main`  
-**Remote before synchronization:** `origin/main` at the accepted Foundation baseline.  
+**Accepted Foundation baseline:** `bfc30fd3333ad5ff61366def7d5880ced5faebd9`
+**Implementation HEAD audited:** `b2aabe5abe270d931ba9421085e956359595646d`
+**Branch:** `main`
+**Remote before synchronization:** `origin/main` at the accepted Foundation baseline.
 **Environment:** local Node.js and isolated temporary repositories/stores; no production services or credentials.
 
 ## Result
