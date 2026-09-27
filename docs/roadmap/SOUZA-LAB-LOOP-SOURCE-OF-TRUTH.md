@@ -1,7 +1,7 @@
 # Souza Lab Loop — Source of Truth
 
 **Baseline date:** 2026-09-27
-**Status:** Documentation baseline accepted; B0 contracts PASS; B1 Markdown adapter PASS; B2 Local Git adapter in progress.
+**Status:** Documentation baseline accepted; B0 contracts PASS; B1 Markdown adapter PASS; B2 Local Git adapter PASS; B3 Computed State Engine in progress.
 **Current phase:** Phase 2 — Loop Base v0 implementation (B0–B7).
 
 This document is the canonical roadmap and governance record for building a reusable development Loop in Souza Lab. It records the phase order, current evidence, decisions, and boundaries. The owner accepted baseline commit `e20e9f327f6b67bf62ca05b53c4185013f910b0b` and authorized implementation through B7; no additional planning gate is required between stages.
@@ -37,8 +37,8 @@ The owner gate for implementation was passed after the accepted baseline commit.
 | — | Owner gate | Passed | Owner accepted the baseline and explicitly authorized implementation through B7. |
 | B0 | Contracts | PASS | Provider-neutral interfaces, canonical structures, closed states, and contract tests pass. |
 | B1 | Markdown Task Adapter | PASS | Parse tasks, acceptance criteria, and dependencies into canonical structures; prove deterministic resolution. |
-| B2 | Local Git Adapter | In progress | Read local revision and working-tree facts through `GitProvider`. |
-| B3 | Computed State Engine | Not started | Derive state from authoritative facts; projections and narrative cannot override it. |
+| B2 | Local Git Adapter | PASS | Read local revision and working-tree facts through `GitProvider`. |
+| B3 | Computed State Engine | In progress | Derive state from authoritative facts; projections and narrative cannot override it. |
 | B4 | Evidence Store | Not started | Append and read validated evidence events without update/delete operations. |
 | B5 | Fake Providers | Not started | Exercise all provider boundaries with deterministic fixtures and no external services. |
 | B6 | Recovery | Not started | Reconstruct the first unproved step from task/Git/CI/validation/review/merge facts. |
