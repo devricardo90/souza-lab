@@ -1,8 +1,8 @@
 # Souza Lab Loop — Source of Truth
 
 **Baseline date:** 2026-09-27
-**Status:** Documentation baseline accepted; B0–B7 implementation and required tests PASS; Microtest 001 PASS (eight acceptance cases).
-**Current phase:** Phase 2 — Loop Base v0 implementation (B0–B7).
+**Status:** Foundation accepted; Phase 4 failure injection, correction, regression tests, Microtest 001 and full suite PASS. See [Phase 4 evidence](../evidence/PHASE-4-FAILURE-INJECTION.md).
+**Current phase:** Phase 4 — failure injection complete; awaiting a separate Owner directive for Phase 5.
 
 This document is the canonical roadmap and governance record for building a reusable development Loop in Souza Lab. It records the phase order, current evidence, decisions, and boundaries. The owner accepted baseline commit `e20e9f327f6b67bf62ca05b53c4185013f910b0b` and authorized implementation through B7; no additional planning gate is required between stages.
 
@@ -43,6 +43,7 @@ The owner gate for implementation was passed after the accepted baseline commit.
 | B5 | Fake Providers | PASS | Exercise all provider boundaries with deterministic fixtures and no external services. |
 | B6 | Recovery | PASS | Reconstruct the first unproved step from task/Git/CI/validation/review/merge facts. |
 | B7 | Synthetic Microtest 001 | PASS | `node --test tests/microtest-001.test.js`; all eight acceptance cases passed, including exact-head staleness, recovery, fail-closed evidence, review ordering, and successful completion/next-task selection. |
+| 4 | Failure injection, correction and retest | PASS | All 34 fault IDs executed; corrections are regression-tested; Microtest 001 and full suite pass. F03 confirms that local suffix truncation needs a trusted external checkpoint to detect. Evidence: `docs/evidence/PHASE-4-FAILURE-INJECTION.md`. |
 
 ## Phase 1 evidence snapshot
 
@@ -97,4 +98,4 @@ Microtest 001 ran against a temporary local Git repository and Markdown roadmap,
 
 ## Change control
 
-Update this document when the owner changes phase order, accepts a gate, resolves an open decision, or corrects a factual claim. Record evidence for completed phase gates. Do not mark a phase complete based only on an agent's summary. The owner gate is passed; continue through B7 unless a genuine hard blocker occurs.
+Update this document when the owner changes phase order, accepts a gate, resolves an open decision, or corrects a factual claim. Record evidence for completed phase gates. Do not mark a phase complete based only on an agent's summary. The owner gate for B0–B7 is passed. Phase 4 is complete. Do not begin Phase 5 until a separate Owner directive authorizes it.
