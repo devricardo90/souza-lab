@@ -1,7 +1,7 @@
 # Souza Lab Loop — Source of Truth
 
 **Baseline date:** 2026-09-27
-**Status:** Documentation baseline accepted; B0 contracts PASS; B1 Markdown adapter PASS; B2 Local Git adapter PASS; B3 Computed State Engine PASS; B4 Evidence Store PASS; B5 Fake Providers PASS; B6 Recovery PASS; B7 Synthetic Microtest in progress.
+**Status:** Documentation baseline accepted; B0–B7 implementation and required tests PASS; Microtest 001 PASS (eight acceptance cases).
 **Current phase:** Phase 2 — Loop Base v0 implementation (B0–B7).
 
 This document is the canonical roadmap and governance record for building a reusable development Loop in Souza Lab. It records the phase order, current evidence, decisions, and boundaries. The owner accepted baseline commit `e20e9f327f6b67bf62ca05b53c4185013f910b0b` and authorized implementation through B7; no additional planning gate is required between stages.
@@ -42,7 +42,7 @@ The owner gate for implementation was passed after the accepted baseline commit.
 | B4 | Evidence Store | PASS | Append and read validated evidence events without update/delete operations. |
 | B5 | Fake Providers | PASS | Exercise all provider boundaries with deterministic fixtures and no external services. |
 | B6 | Recovery | PASS | Reconstruct the first unproved step from task/Git/CI/validation/review/merge facts. |
-| B7 | Synthetic Microtest 001 | In progress | Execute the full architecture and pass all eight required test cases. |
+| B7 | Synthetic Microtest 001 | PASS | `node --test tests/microtest-001.test.js`; all eight acceptance cases passed, including exact-head staleness, recovery, fail-closed evidence, review ordering, and successful completion/next-task selection. |
 
 ## Phase 1 evidence snapshot
 
@@ -89,11 +89,11 @@ TASK
 
 Loop Base v0 preserves the proven properties—dependency-based task resolution, exact-revision validation and review, fail-closed gates, append-only evidence, post-merge validation, and resumable waits—while changing project-specific Markdown/GitHub assumptions into replaceable adapters. Computed state must be checked against persisted projections. Implementation follows the approved B0–B7 sequence.
 
-The exact task-system adapter, execution runtime, reviewer/validator providers, durable wakeup mechanism, and server-side merge enforcement remain open decisions. They must not be silently settled by implementation.
+The exact task-system adapter beyond the Markdown prototype, production execution runtime, real reviewer/validator providers, durable wakeup mechanism, and server-side merge enforcement remain open decisions. They must not be silently settled by this synthetic implementation.
 
 ## Microtest boundary
 
-Microtest 001 is **not started** and is authorized as B7. It will use isolated synthetic facts and deterministic fake providers, with no RecompraCRM files, credentials, GitHub writes, model calls, or deployment. It must execute all eight cases from the owner directive, including the valid path and rejection/recovery cases. Its executable results, not this description, determine PASS.
+Microtest 001 ran against a temporary local Git repository and Markdown roadmap, using the real local Git/task/evidence/state/recovery components and deterministic fake SCM/CI/review/validation providers. `node --test tests/microtest-001.test.js` passed all eight required cases. It used no RecompraCRM files, credentials, GitHub writes, model calls, deployment, or external services. The full `npm test` suite is the final B0–B7 verification gate.
 
 ## Change control
 
