@@ -185,9 +185,14 @@ export function makeMergeFact(input, path = "MergeFact") {
   const value = record(input, path);
   const candidateHead = nonEmptyString(value.candidateHead, `${path}.candidateHead`);
   const mergeCommit = value.mergeCommit == null ? null : nonEmptyString(value.mergeCommit, `${path}.mergeCommit`);
-  if (Boolean(value.merged) && !mergeCommit) throw new ContractError(`${path}.mergeCommit`, "is required when merged is true");
+  const status = enumValue(value.status ?? (value.merged ? "MERGED" : "NOT_STARTED"), ["NOT_STARTED", "PENDING", "FAILED", "UNKNOWN", "MERGED"], `${path}.status`);
+  if (status === "MERGED" && !mergeCommit) throw new ContractError(`${path}.mergeCommit`, "is required when status is MERGED");
+  if (value.merged !== undefined && Boolean(value.merged) !== (status === "MERGED")) {
+    throw new ContractError(`${path}.merged`, "must agree with status");
+  }
   return Object.freeze({
-    merged: Boolean(value.merged),
+    status,
+    merged: status === "MERGED",
     candidateHead,
     mergeCommit,
     mergedAt: value.mergedAt == null ? null : isoTimestamp(value.mergedAt, `${path}.mergedAt`),

@@ -46,7 +46,7 @@ test("revision, CI, review, validation, merge, event and computed-state contract
   assert.equal(makeEvidenceEvent({ eventId: "event-1", eventType: "CI_RECORDED", occurredAt: "2026-09-27T00:00:00Z" }).schemaVersion, 1);
   assert.equal(makeComputedState({ state: "REVIEWING", computedAt: "2026-09-27T00:00:00Z" }).state, "REVIEWING");
   assert.throws(() => makeCIResult({ head: "abcdef0", status: "GREEN" }), /must be one of/);
-  assert.throws(() => makeMergeFact({ merged: true, candidateHead: "abcdef0" }), /required when merged/);
+  assert.throws(() => makeMergeFact({ merged: true, candidateHead: "abcdef0" }), /required when status is MERGED/);
   assert.throws(() => makeValidationResult({ head: "abcdef0", baseline: "1234567", specDigest: "s", result: "PASS", acProof: { total: 1, proved: 2 } }), /valid non-negative/);
 });
 
