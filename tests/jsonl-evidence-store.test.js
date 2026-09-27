@@ -63,3 +63,57 @@ test("store fails closed on invalid, truncated, reordered, or altered history", 
     assert.throws(() => store.append(event("e-1", "TASK-001")), /duplicate event id/);
   });
 });
+
+test("F01 — modifying historical evidence content invalidates the chain", () => {
+  withStore((path) => {
+    const store = new JsonlEvidenceStore({ path });
+    store.append(event("f01-e1", "TASK-001", { verdict: "REVIEWING" }));
+    store.append(event("f01-e2", "TASK-001", { verdict: "DONE" }));
+    const records = readFileSync(path, "utf8").trimEnd().split("\n").map((line) => JSON.parse(line));
+    records[0].event.payload.verdict = "DONE";
+    writeFileSync(path, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
+    assert.throws(() => store.listAll(), (error) => error.code === "HASH_CHAIN_MISMATCH");
+    assert.throws(() => store.getById("f01-e1"), (error) => error.code === "HASH_CHAIN_MISMATCH");
+  });
+});
+
+test("F02 — presenting E1, E3, E2 is rejected as reordered history", () => {
+  withStore((path) => {
+    const store = new JsonlEvidenceStore({ path });
+    for (const id of ["f02-e1", "f02-e2", "f02-e3"]) store.append(event(id, "TASK-001"));
+    const lines = readFileSync(path, "utf8").trimEnd().split("\n");
+    writeFileSync(path, `${lines[0]}\n${lines[2]}\n${lines[1]}\n`);
+    assert.throws(() => store.listAll(), (error) => error.code === "INVALID_SEQUENCE");
+    assert.throws(() => store.getById("f02-e1"), (error) => error.code === "INVALID_SEQUENCE");
+  });
+});
+
+test("F03 — removing a valid final event is not detectable without an external checkpoint", () => {
+  withStore((path) => {
+    const store = new JsonlEvidenceStore({ path });
+    for (const id of ["f03-e1", "f03-e2", "f03-e3", "f03-e4"]) store.append(event(id, "TASK-001"));
+    const lines = readFileSync(path, "utf8").trimEnd().split("\n");
+    writeFileSync(path, `${lines.slice(0, 3).join("\n")}\n`);
+    assert.deepEqual(store.listAll().map(({ eventId }) => eventId), ["f03-e1", "f03-e2", "f03-e3"]);
+  });
+});
+
+test("F04 — duplicate event IDs are rejected without overwriting prior evidence", () => {
+  withStore((path) => {
+    const store = new JsonlEvidenceStore({ path });
+    store.append(event("f04-duplicate", "TASK-001", { value: 1 }));
+    assert.throws(() => store.append(event("f04-duplicate", "TASK-001", { value: 2 })), (error) => error.code === "DUPLICATE_EVENT");
+    assert.equal(store.listAll()[0].payload.value, 1);
+  });
+});
+
+test("F05 — sequence gap 1, 2, 4 is rejected", () => {
+  withStore((path) => {
+    const store = new JsonlEvidenceStore({ path });
+    for (const id of ["f05-e1", "f05-e2", "f05-e3"]) store.append(event(id, "TASK-001"));
+    const records = readFileSync(path, "utf8").trimEnd().split("\n").map((line) => JSON.parse(line));
+    records[2].sequence = 4;
+    writeFileSync(path, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
+    assert.throws(() => store.listAll(), (error) => error.code === "INVALID_SEQUENCE");
+  });
+});

@@ -37,6 +37,8 @@ const ROADMAP = `# Microtest roadmap
   - acceptance_criteria:
     - AC-01 — The synthetic lifecycle reaches a computed result
 `;
+const ACCEPTANCE_CRITERIA_DIGEST = parseTasksMarkdown(ROADMAP)
+  .find(({ id }) => id === TASK_ID).acceptanceCriteriaDigest;
 
 function git(cwd, args) {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true }).trim();
@@ -71,7 +73,7 @@ function ciResult(head, status = "PASS") {
 
 function validationResult({ head, baseline, specDigest, total = 1, proved = total, result = "PASS" }) {
   return {
-    taskId: TASK_ID, head, baseline, specDigest, result,
+    taskId: TASK_ID, head, baseline, specDigest, acceptanceCriteriaDigest: ACCEPTANCE_CRITERIA_DIGEST, result,
     acProof: { total, proved }, checkedAt: "2026-09-27T14:30:00.000Z", independent: true,
   };
 }

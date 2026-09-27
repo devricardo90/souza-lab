@@ -40,7 +40,7 @@ test("revision, CI, review, validation, merge, event and computed-state contract
   assert.equal(makeCIResult({ head: "abcdef0", status: "UNKNOWN" }).status, "UNKNOWN");
   assert.equal(makeReviewResult({ head: "abcdef0", verdict: "CLEAN", independent: true, unresolvedFindings: 0 }).verdict, "CLEAN");
   assert.equal(makeValidationResult({
-    head: "abcdef0", baseline: "1234567", specDigest: "sha256", result: "PASS", acProof: { total: 2, proved: 2 }, independent: true,
+    head: "abcdef0", baseline: "1234567", specDigest: "sha256", acceptanceCriteriaDigest: "sha256-ac", result: "PASS", acProof: { total: 2, proved: 2 }, independent: true,
   }).acProof.proved, 2);
   assert.equal(makeMergeFact({ merged: true, candidateHead: "abcdef0", mergeCommit: "7654321" }).merged, true);
   assert.equal(makeEvidenceEvent({ eventId: "event-1", eventType: "CI_RECORDED", occurredAt: "2026-09-27T00:00:00Z" }).schemaVersion, 1);

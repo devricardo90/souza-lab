@@ -38,7 +38,7 @@ test("SCM, CI, review, and validation fakes return only exact matching facts", (
   assert.equal(review.getReviewResult(HEAD_B), null);
 
   const validation = new FakeValidationProvider({ results: [{
-    taskId: "TASK-001", head: HEAD_A, baseline: HEAD_B, specDigest: "spec-a", result: "PASS",
+    taskId: "TASK-001", head: HEAD_A, baseline: HEAD_B, specDigest: "spec-a", acceptanceCriteriaDigest: "ac-a", result: "PASS",
     acProof: { total: 1, proved: 1 }, independent: true,
   }] });
   assert.equal(validation.getValidationResult("TASK-001", HEAD_A).result, "PASS");

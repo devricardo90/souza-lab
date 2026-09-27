@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { makeRevision } from "../src/core/contracts.js";
+import { makeRevision, makeTask } from "../src/core/contracts.js";
 import { RecoveryCoordinator, RecoveryError } from "../src/core/recovery-coordinator.js";
 import {
   FakeCIProvider,
@@ -24,10 +24,11 @@ const TASKS = [
   { id: "TASK-001", title: "Current work", acceptanceCriteria: [{ id: "AC-01", description: "Path works" }], dependencies: [], specPresent: true },
   { id: "TASK-002", title: "Next work", acceptanceCriteria: [{ id: "AC-01", description: "Next path works" }], dependencies: [{ taskId: "TASK-001" }] },
 ];
+const AC_DIGEST = makeTask(TASKS[0]).acceptanceCriteriaDigest;
 
 function makeCoordinator({ head = H, ciHead = head, ciStatus = "PASS", validationHead = head, reviewHead = head, withValidation = false, withCodeReview = true, mergeStatus = "NOT_STARTED", withPostMerge = false, evidence = null } = {}) {
   const validation = {
-    taskId: "TASK-001", head: validationHead, baseline: BASE, specDigest: SPEC_DIGEST, result: "PASS",
+    taskId: "TASK-001", head: validationHead, baseline: BASE, specDigest: SPEC_DIGEST, acceptanceCriteriaDigest: AC_DIGEST, result: "PASS",
     acProof: { total: 1, proved: 1 }, checkedAt: NOW, independent: true,
   };
   const reviews = [{
@@ -44,7 +45,7 @@ function makeCoordinator({ head = H, ciHead = head, ciStatus = "PASS", validatio
   }];
   const validations = withValidation ? [validation] : [];
   if (withPostMerge) validations.push({
-    taskId: "TASK-001", head: MERGE_HEAD, baseline: head, specDigest: SPEC_DIGEST, result: "PASS",
+    taskId: "TASK-001", head: MERGE_HEAD, baseline: head, specDigest: SPEC_DIGEST, acceptanceCriteriaDigest: AC_DIGEST, result: "PASS",
     acProof: { total: 1, proved: 1 }, checkedAt: NOW, independent: true,
   });
   return new RecoveryCoordinator({

@@ -12,6 +12,7 @@ const TASK = makeTask({
 const REVISION = makeRevision({ head: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", base: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", branch: "feature/task-1" });
 const SPEC_REVISION = makeRevision({ head: "1111111111111111111111111111111111111111", base: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", branch: "docs/task-1-spec" });
 const DIGEST = "spec-sha256-1";
+const AC_DIGEST = TASK.acceptanceCriteriaDigest;
 
 function facts(overrides = {}) {
   return {
@@ -26,7 +27,7 @@ function facts(overrides = {}) {
     ci: makeCIResult({ head: REVISION.head, status: "PASS", checkedAt: NOW }),
     validation: makeValidationResult({
       head: REVISION.head, baseline: REVISION.base, specDigest: DIGEST, result: "PASS",
-      acProof: { total: 2, proved: 2 }, checkedAt: NOW, independent: true,
+      acceptanceCriteriaDigest: AC_DIGEST, acProof: { total: 2, proved: 2 }, checkedAt: NOW, independent: true,
     }),
     review: makeReviewResult({
       head: REVISION.head, verdict: "CLEAN", independent: true, unresolvedFindings: 0,
@@ -53,8 +54,8 @@ test("computed state follows the first unproved stage and fails closed", () => {
   assert.equal(computeState(facts({ ci: makeCIResult({ head: REVISION.head, status: "PENDING" }) })).state, "WAIT_RETRYABLE");
   assert.equal(computeState(facts({ ci: makeCIResult({ head: "ccccccc", status: "PASS" }) })).state, "TESTING");
   assert.equal(computeState(facts({ validation: null })).state, "VALIDATING");
-  assert.equal(computeState(facts({ validation: makeValidationResult({ head: "ccccccc", baseline: REVISION.base, specDigest: DIGEST, result: "PASS", acProof: { total: 2, proved: 2 }, independent: true }) })).state, "VALIDATING");
-  assert.equal(computeState(facts({ validation: makeValidationResult({ head: REVISION.head, baseline: REVISION.base, specDigest: DIGEST, result: "PASS", acProof: { total: 2, proved: 1 }, independent: true }) })).state, "VALIDATING");
+  assert.equal(computeState(facts({ validation: makeValidationResult({ head: "ccccccc", baseline: REVISION.base, specDigest: DIGEST, acceptanceCriteriaDigest: AC_DIGEST, result: "PASS", acProof: { total: 2, proved: 2 }, independent: true }) })).state, "VALIDATING");
+  assert.equal(computeState(facts({ validation: makeValidationResult({ head: REVISION.head, baseline: REVISION.base, specDigest: DIGEST, acceptanceCriteriaDigest: AC_DIGEST, result: "PASS", acProof: { total: 2, proved: 1 }, independent: true }) })).state, "VALIDATING");
   assert.equal(computeState(facts({ review: null })).state, "REVIEWING");
   assert.equal(computeState(facts({ review: makeReviewResult({ head: REVISION.head, verdict: "CLEAN", independent: false, unresolvedFindings: 0, publishedAt: NOW }) })).state, "REVIEWING");
   assert.equal(computeState(facts({ review: makeReviewResult({ head: REVISION.head, verdict: "CLEAN", independent: true, unresolvedFindings: 1, publishedAt: NOW }) })).state, "REVIEWING");
@@ -68,7 +69,7 @@ test("DONE requires pre-merge exact-head review, complete validation and post-me
     mergedAt: "2026-09-27T09:30:00.000Z",
   });
   const postMergeValidation = makeValidationResult({
-    head: merge.mergeCommit, baseline: REVISION.head, specDigest: DIGEST, result: "PASS",
+    head: merge.mergeCommit, baseline: REVISION.head, specDigest: DIGEST, acceptanceCriteriaDigest: AC_DIGEST, result: "PASS",
     acProof: { total: 2, proved: 2 }, checkedAt: NOW, independent: true,
   });
   assert.equal(computeState(facts({ merge })).state, "POST_MERGE_VALIDATION");
