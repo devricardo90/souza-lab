@@ -42,6 +42,32 @@ function finalizeTask(draft, tasks) {
   }));
 }
 
+function withoutHtmlComments(line, wasInComment) {
+  let output = "";
+  let cursor = 0;
+  let inComment = wasInComment;
+  while (cursor < line.length) {
+    if (inComment) {
+      const end = line.indexOf("-->", cursor);
+      if (end < 0) return { line: output, inComment: true };
+      cursor = end + 3;
+      inComment = false;
+      continue;
+    }
+    const start = line.indexOf("<!--", cursor);
+    if (start < 0) {
+      output += line.slice(cursor);
+      break;
+    }
+    output += line.slice(cursor, start);
+    cursor = start + 4;
+    const end = line.indexOf("-->", cursor);
+    if (end < 0) return { line: output, inComment: true };
+    cursor = end + 3;
+  }
+  return { line: output, inComment };
+}
+
 /**
  * Parse this deliberately small format:
  *
@@ -60,16 +86,20 @@ export function parseTasksMarkdown(markdown) {
   let draft = null;
   let inCriteria = false;
   let fence = null;
+  let inHtmlComment = false;
 
   for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
+    let line = lines[index];
     const lineNumber = index + 1;
-    const fenceLine = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
     if (fence) {
       const closesFence = line.match(/^ {0,3}(`{3,}|~{3,})[ \t]*$/);
       if (closesFence && closesFence[1][0] === fence.character && closesFence[1].length >= fence.length) fence = null;
       continue;
     }
+    const uncommented = withoutHtmlComments(line, inHtmlComment);
+    line = uncommented.line;
+    inHtmlComment = uncommented.inComment;
+    const fenceLine = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
     if (fenceLine) {
       fence = { character: fenceLine[1][0], length: fenceLine[1].length };
       continue;

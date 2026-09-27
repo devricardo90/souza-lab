@@ -90,3 +90,17 @@ test("task-shaped examples inside Markdown code fences cannot become executable 
   assert.deepEqual(parseTasksMarkdown(example), []);
   assert.throws(() => parseTasksMarkdown("# Missing close\n\n\`\`\`markdown\n- [ ] TASK-999 — Example"), /unclosed Markdown code fence/);
 });
+
+test("commented-out task rows cannot become executable tasks", () => {
+  const comment = `# Roadmap
+
+<!--
+- [ ] TASK-999 — Disabled work
+  - spec: reviewed
+  - depends_on: none
+  - acceptance_criteria:
+    - AC-01 — This is commented out
+-->
+`;
+  assert.deepEqual(parseTasksMarkdown(comment), []);
+});

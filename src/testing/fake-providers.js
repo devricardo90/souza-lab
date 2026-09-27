@@ -96,18 +96,28 @@ export class FakeValidationProvider extends ValidationProvider {
 }
 
 export class FakeEvidenceStore extends EvidenceStore {
+  #events = [];
+
   constructor() {
     super();
-    this.events = [];
   }
 
   append(input) {
-    const event = makeEvidenceEvent(input);
-    if (this.events.some((existing) => existing.eventId === event.eventId)) throw new TypeError(`duplicate event id ${event.eventId}`);
-    this.events.push(event);
+    const event = JSON.parse(JSON.stringify(makeEvidenceEvent(input)));
+    deepFreeze(event);
+    if (this.#events.some((existing) => existing.eventId === event.eventId)) throw new TypeError(`duplicate event id ${event.eventId}`);
+    this.#events.push(event);
     return event;
   }
 
-  listByTask(taskId) { return Object.freeze(this.events.filter((event) => event.taskId === taskId)); }
-  listAll() { return Object.freeze([...this.events]); }
+  listByTask(taskId) { return Object.freeze(this.#events.filter((event) => event.taskId === taskId)); }
+  listAll() { return Object.freeze([...this.#events]); }
+}
+
+function deepFreeze(value) {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
 }

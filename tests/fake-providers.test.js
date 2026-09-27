@@ -48,8 +48,18 @@ test("SCM, CI, review, and validation fakes return only exact matching facts", (
 
 test("fake evidence provider validates, appends and queries immutable event records", () => {
   const store = new FakeEvidenceStore();
-  const event = store.append({ eventId: "evt-1", eventType: "CI_RECORDED", occurredAt: "2026-09-27T00:00:00Z", taskId: "TASK-001", revisionHead: HEAD_A });
+  const input = {
+    eventId: "evt-1", eventType: "CI_RECORDED", occurredAt: "2026-09-27T00:00:00Z",
+    taskId: "TASK-001", revisionHead: HEAD_A, payload: { facts: { status: "PASS" } },
+  };
+  const event = store.append(input);
+  input.payload.facts.status = "FAIL";
+  assert.equal(event.payload.facts.status, "PASS");
+  assert.equal(Object.isFrozen(event.payload.facts), true);
   assert.equal(store.listByTask("TASK-001")[0], event);
   assert.equal(store.listByTask("TASK-002").length, 0);
+  assert.equal("events" in store, false);
+  assert.equal("update" in store, false);
+  assert.equal("delete" in store, false);
   assert.throws(() => store.append({ eventId: "evt-1", eventType: "CI_RECORDED", occurredAt: "2026-09-27T00:00:00Z" }), /duplicate event id/);
 });
