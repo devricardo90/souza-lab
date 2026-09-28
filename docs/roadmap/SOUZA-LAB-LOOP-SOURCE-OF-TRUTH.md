@@ -1,8 +1,8 @@
 # Souza Lab Loop — Source of Truth
 
 **Baseline date:** 2026-09-27
-**Status:** Foundation accepted; Phase 4 failure injection, correction, regression tests, Microtest 001 and full suite PASS. See [Phase 4 evidence](../evidence/PHASE-4-FAILURE-INJECTION.md).
-**Current phase:** Phase 4 — failure injection complete; awaiting a separate Owner directive for Phase 5.
+**Status:** Phase 5 execution runtime PASS after Microtest 002, Phase 4 regressions, Microtest 001, and the full suite. See [Phase 5 evidence](../evidence/PHASE-5-EXECUTION-RUNTIME.md).
+**Current phase:** Phase 5 — execution runtime complete; next phase requires a separate Owner directive.
 
 This document is the canonical roadmap and governance record for building a reusable development Loop in Souza Lab. It records the phase order, current evidence, decisions, and boundaries. The owner accepted baseline commit `e20e9f327f6b67bf62ca05b53c4185013f910b0b` and authorized implementation through B7; no additional planning gate is required between stages.
 
@@ -44,6 +44,7 @@ The owner gate for implementation was passed after the accepted baseline commit.
 | B6 | Recovery | PASS | Reconstruct the first unproved step from task/Git/CI/validation/review/merge facts. |
 | B7 | Synthetic Microtest 001 | PASS | `node --test tests/microtest-001.test.js`; all eight acceptance cases passed, including exact-head staleness, recovery, fail-closed evidence, review ordering, and successful completion/next-task selection. |
 | 4 | Failure injection, correction and retest | PASS | All 34 fault IDs executed; corrections are regression-tested; Microtest 001 and full suite pass. F03 confirms that local suffix truncation needs a trusted external checkpoint to detect. Evidence: `docs/evidence/PHASE-4-FAILURE-INJECTION.md`. |
+| 5 | Execution runtime | PASS | Deterministic runtime, action planning, checkpoints, retries/wakeup contract, evidence anchoring, projections, Microtest 002, R01–R08, and P5-01–P5-20 passed. Phase 4 regressions, Microtest 001, and the 92-test full suite pass. Evidence: `docs/evidence/PHASE-5-EXECUTION-RUNTIME.md`. |
 
 ## Phase 1 evidence snapshot
 
@@ -90,7 +91,7 @@ TASK
 
 Loop Base v0 preserves the proven properties—dependency-based task resolution, exact-revision validation and review, fail-closed gates, append-only evidence, post-merge validation, and resumable waits—while changing project-specific Markdown/GitHub assumptions into replaceable adapters. Computed state must be checked against persisted projections. Implementation follows the approved B0–B7 sequence.
 
-The exact task-system adapter beyond the Markdown prototype, production execution runtime, real reviewer/validator providers, durable wakeup mechanism, and server-side merge enforcement remain open decisions. They must not be silently settled by this synthetic implementation.
+Production task-system/SCM/CI/review/validation adapters, real capability providers, durable wakeup service, multi-process execution locking, and server-side merge enforcement remain open decisions. They must not be silently settled by this synthetic implementation.
 
 ## Microtest boundary
 
@@ -98,4 +99,4 @@ Microtest 001 ran against a temporary local Git repository and Markdown roadmap,
 
 ## Change control
 
-Update this document when the owner changes phase order, accepts a gate, resolves an open decision, or corrects a factual claim. Record evidence for completed phase gates. Do not mark a phase complete based only on an agent's summary. The owner gate for B0–B7 is passed. Phase 4 is complete. Do not begin Phase 5 until a separate Owner directive authorizes it.
+Update this document when the owner changes phase order, accepts a gate, resolves an open decision, or corrects a factual claim. Record evidence for completed phase gates. Do not mark a phase complete based only on an agent's summary. The owner gate for B0–B7 is passed. Phases 4 and 5 are complete. Do not begin Phase 6 until a separate Owner directive authorizes it.

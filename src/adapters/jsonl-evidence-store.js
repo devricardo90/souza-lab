@@ -100,4 +100,15 @@ export class JsonlEvidenceStore extends EvidenceStore {
     if (typeof eventId !== "string" || eventId.trim() === "") throw new TypeError("getById requires an event id");
     return this.readRecords().find(({ event }) => event.eventId === eventId)?.event ?? null;
   }
+
+  getIntegrityCheckpoint() {
+    const records = this.readRecords();
+    return Object.freeze({ sequence: records.length, rootHash: records.at(-1)?.hash ?? ZERO_HASH });
+  }
+
+  getHashAtSequence(sequence) {
+    if (!Number.isInteger(sequence) || sequence < 0) throw new TypeError("sequence must be a non-negative integer");
+    if (sequence === 0) return ZERO_HASH;
+    return this.readRecords()[sequence - 1]?.hash ?? null;
+  }
 }

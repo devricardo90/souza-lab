@@ -35,6 +35,12 @@ export const EVIDENCE_EVENT_TYPES = Object.freeze([
   "POST_MERGE_VALIDATION_RECORDED",
   "STATE_COMPUTED",
   "RECOVERY_COMPUTED",
+  "ACTION_PLANNED",
+  "ACTION_RESULT",
+  "RUNTIME_CYCLE",
+  "CHECKPOINT_WRITTEN",
+  "PROJECTIONS_WRITTEN",
+  "WAKEUP_SCHEDULED",
 ]);
 
 const ENUMS = Object.freeze({
@@ -276,6 +282,23 @@ export class EvidenceStore extends ProviderContract {
   append() { return this.notImplemented("append"); }
   getById() { return this.notImplemented("getById"); }
   listByTask() { return this.notImplemented("listByTask"); }
+  getIntegrityCheckpoint() { return this.notImplemented("getIntegrityCheckpoint"); }
+  getHashAtSequence() { return this.notImplemented("getHashAtSequence"); }
+}
+
+export class EvidenceCheckpointProvider extends ProviderContract {
+  readTrustedCheckpoint() { return this.notImplemented("readTrustedCheckpoint"); }
+  publishCheckpoint() { return this.notImplemented("publishCheckpoint"); }
+}
+
+export class RuntimeCheckpointStore extends ProviderContract {
+  read() { return this.notImplemented("read"); }
+  write() { return this.notImplemented("write"); }
+}
+
+export class WakeupProvider extends ProviderContract {
+  schedule() { return this.notImplemented("schedule"); }
+  listDue() { return this.notImplemented("listDue"); }
 }
 
 export class StateEngine extends ProviderContract {

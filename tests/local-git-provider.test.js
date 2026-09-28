@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { LocalGitError, LocalGitProvider } from "../src/adapters/local-git-provider.js";
 
 function git(cwd, args) {
-  return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true }).trim();
+  return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true, timeout: 15000, killSignal: "SIGTERM" }).trim();
 }
 
 function withFixtureRepo(run) {

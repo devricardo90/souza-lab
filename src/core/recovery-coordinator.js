@@ -64,6 +64,7 @@ export class RecoveryCoordinator {
 
   recover({
     activeTaskId = null,
+    activeTaskHint = null,
     specRevision = null,
     specDigest = null,
     stateProjection = null,
@@ -75,7 +76,16 @@ export class RecoveryCoordinator {
     const { taskSystem, gitProvider, scmProvider, ciProvider, reviewProvider, validationProvider, evidenceStore } = this.providers;
     const tasks = taskSystem.listTasks();
     const selection = taskSystem.resolveNextTask();
-    const taskId = activeTaskId ?? selection.taskId;
+    let taskId = activeTaskId ?? selection.taskId;
+    if (activeTaskHint !== null) {
+      const hintedTask = tasks.find((entry) => entry.id === activeTaskHint) ?? null;
+      if (!hintedTask) throw new RecoveryError(`active task ${activeTaskHint} is not present in the task source`, "ACTIVE_TASK_MISSING");
+      // A checkpoint can resume the same selected task or finish a task already
+      // marked complete. It cannot steer execution ahead of current task order.
+      taskId = hintedTask.completed || selection.taskId === activeTaskHint
+        ? activeTaskHint
+        : selection.taskId;
+    }
     const task = taskId === null ? null : tasks.find((entry) => entry.id === taskId) ?? null;
     if (taskId !== null && !task) throw new RecoveryError(`active task ${taskId} is not present in the task source`, "ACTIVE_TASK_MISSING");
 

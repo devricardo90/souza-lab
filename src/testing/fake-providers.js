@@ -14,6 +14,7 @@ import {
   makeTask,
   makeValidationResult,
 } from "../core/contracts.js";
+import { createHash } from "node:crypto";
 import { resolveNextTask } from "../adapters/markdown-task-adapter.js";
 
 function uniqueBy(values, key, label) {
@@ -113,6 +114,21 @@ export class FakeEvidenceStore extends EvidenceStore {
   listByTask(taskId) { return Object.freeze(this.#events.filter((event) => event.taskId === taskId)); }
   listAll() { return Object.freeze([...this.#events]); }
   getById(eventId) { return this.#events.find((event) => event.eventId === eventId) ?? null; }
+  getIntegrityCheckpoint() {
+    let previousHash = "0".repeat(64);
+    this.#events.forEach((event, index) => {
+      previousHash = createHash("sha256").update(JSON.stringify({ sequence: index + 1, previousHash, event }), "utf8").digest("hex");
+    });
+    return Object.freeze({ sequence: this.#events.length, rootHash: previousHash });
+  }
+  getHashAtSequence(sequence) {
+    if (!Number.isInteger(sequence) || sequence < 0 || sequence > this.#events.length) return null;
+    let previousHash = "0".repeat(64);
+    for (let index = 0; index < sequence; index += 1) {
+      previousHash = createHash("sha256").update(JSON.stringify({ sequence: index + 1, previousHash, event: this.#events[index] }), "utf8").digest("hex");
+    }
+    return previousHash;
+  }
 }
 
 function deepFreeze(value) {
