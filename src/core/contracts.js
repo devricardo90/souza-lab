@@ -161,6 +161,9 @@ export function makeCIResult(input, path = "CIResult") {
     status: enumValue(value.status, ENUMS.CI_STATUS, `${path}.status`),
     checkedAt: value.checkedAt == null ? null : isoTimestamp(value.checkedAt, `${path}.checkedAt`),
     runId: value.runId == null ? null : nonEmptyString(value.runId, `${path}.runId`),
+    repository: value.repository == null ? null : nonEmptyString(value.repository, `${path}.repository`),
+    workflowIdentity: value.workflowIdentity == null ? null : nonEmptyString(value.workflowIdentity, `${path}.workflowIdentity`),
+    conclusion: value.conclusion == null ? null : nonEmptyString(value.conclusion, `${path}.conclusion`),
   });
 }
 
