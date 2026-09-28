@@ -80,7 +80,7 @@ class DynamicValidationProvider {
 }
 class DynamicSCMProvider { constructor(f) { this.f = f; } getMergeFact(_taskId, head) { return this.f.merge?.candidateHead === head ? this.f.merge : null; } }
 
-function makeRuntime(root, facts, { faultInjector = () => {}, executorOverride = null, timeoutMs = 1000, shared = null, wakeupProvider = null, clock = () => new Date().toISOString() } = {}) {
+function makeRuntime(root, facts, { faultInjector = () => {}, executorOverride = null, timeoutMs = 1000, shared = null, wakeupProvider = null, retryPolicy = null, clock = () => new Date().toISOString() } = {}) {
   const taskSystem = new DynamicTaskProvider(facts);
   const recoveryCoordinator = new RecoveryCoordinator({
     taskSystem,
@@ -129,7 +129,7 @@ function makeRuntime(root, facts, { faultInjector = () => {}, executorOverride =
   const runtime = new LoopRuntime({
     observer, executor, evidenceStore, evidenceCheckpointProvider,
     checkpointStore,
-    retryPolicy: new RuntimeRetryPolicy({ maxAttempts: 3, baseDelayMs: 100, maxDelayMs: 1000 }),
+    retryPolicy: retryPolicy ?? new RuntimeRetryPolicy({ maxAttempts: 3, baseDelayMs: 100, maxDelayMs: 1000 }),
     timeoutMs, faultInjector, wakeupProvider, clock,
   });
   const persistence = { evidenceStore, evidenceCheckpointProvider, projectionStore, executor };
@@ -381,6 +381,39 @@ test("P5-06 — durable success without provider-state advancement blocks instea
   assert.equal(system.evidenceStore.listAll().filter((event) => event.eventType === "ACTION_RESULT" && event.payload.actionType === "PREPARE_SPEC").length, 1);
 });
 
+test("P5-13 audit — overlapping cycles for one execution cannot issue duplicate merges", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "loop-concurrent-merge-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const facts = new LifecycleFacts();
+  const system = makeRuntime(root, facts);
+  const executionId = "repo:TASK-001:concurrent-merge";
+  let ready = false;
+  for (let index = 0; index < 30 && !ready; index += 1) {
+    const cycle = await system.runtime.runCycle({ executionId, repository: "repo-synthetic" });
+    ready = cycle.nextComputed.state === "READY_TO_MERGE" && !cycle.nextComputed.projectionMismatch;
+  }
+  assert.equal(ready, true);
+  const underlyingExecutor = system.executor;
+  let enteredReconcile = 0;
+  let releaseReconcile;
+  const bothReconciled = new Promise((resolve) => { releaseReconcile = resolve; });
+  system.runtime.executor = {
+    reconcile: async () => {
+      enteredReconcile += 1;
+      if (enteredReconcile === 2) releaseReconcile();
+      await Promise.race([bothReconciled, new Promise((resolve) => setTimeout(resolve, 50))]);
+      return { status: "NOT_STARTED" };
+    },
+    execute: (action, context) => underlyingExecutor.execute(action, context),
+  };
+  const results = await Promise.allSettled([
+    system.runtime.runCycle({ executionId, repository: "repo-synthetic" }),
+    system.runtime.runCycle({ executionId, repository: "repo-synthetic" }),
+  ]);
+  assert.equal(facts.calls.filter((value) => value === "merge").length, 1);
+  assert.equal(results.filter((value) => value.status === "fulfilled").length, 2);
+});
+
 test("P5-06 — malformed reconciliation cannot be treated as NOT_STARTED or successful", async (t) => {
   for (const [name, reconcile] of [
     ["unknown-status", async () => ({ status: "DONE" })],
@@ -446,6 +479,37 @@ test("P5-10 — a hung async capability is bounded and becomes a retryable wait"
   assert.equal(result.actionResult.errorClass, "TRANSIENT");
 });
 
+test("P5-06/P5-10 — a late capability completion is reconciled across retry attempts", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "loop-late-capability-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const facts = new LifecycleFacts();
+  const system = makeRuntime(root, facts, { timeoutMs: 20, retryPolicy: new RuntimeRetryPolicy({ maxAttempts: 3, baseDelayMs: 0, maxDelayMs: 0 }) });
+  const executionId = "repo:TASK-001:late-capability";
+  await system.runtime.runCycle({ executionId, repository: "repo-synthetic" });
+  let specCalls = 0;
+  let finishSpec;
+  const specCompletion = new Promise((resolve) => { finishSpec = resolve; });
+  system.runtime.executor = new FakeCapabilityExecutor({ capabilities: {
+    PREPARE_SPEC: async () => {
+      specCalls += 1;
+      await specCompletion;
+      facts.specPresent = true;
+      return { outputReference: "late-spec-v1" };
+    },
+  } });
+  const timedOut = await system.runtime.runCycle({ executionId, repository: "repo-synthetic" });
+  assert.equal(timedOut.outcome, "WAIT_RETRYABLE");
+  const stillRunning = await system.runtime.runCycle({ executionId, repository: "repo-synthetic" });
+  assert.equal(stillRunning.outcome, "WAIT_RETRYABLE");
+  assert.equal(specCalls, 1);
+  finishSpec();
+  await new Promise((resolve) => setImmediate(resolve));
+  const reconciled = await system.runtime.runCycle({ executionId, repository: "repo-synthetic" });
+  assert.equal(facts.specPresent, true);
+  assert.equal(specCalls, 1);
+  assert.notEqual(reconciled.plannedAction.actionType, "PREPARE_SPEC");
+});
+
 test("P5-10 — a hung reconciliation provider is bounded before capability execution", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "loop-reconcile-timeout-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -473,9 +537,10 @@ test("P5-10 — retry waits until its durable eligibility time and increments at
   const executionId = "repo:TASK-001:retry-eligibility";
   await system.runtime.runCycle({ executionId, repository: "repo-synthetic" });
   let calls = 0;
+  const idempotencyKeys = [];
   system.runtime.executor = {
     reconcile: async () => ({ status: "NOT_STARTED" }),
-    execute: async () => { calls += 1; throw Object.assign(new Error("temporary outage"), { classification: "TRANSIENT" }); },
+    execute: async (_action, context) => { calls += 1; idempotencyKeys.push(context.idempotencyKey); throw Object.assign(new Error("temporary outage"), { classification: "TRANSIENT" }); },
   };
   const failed = await system.runtime.runCycle({ executionId, repository: "repo-synthetic" });
   assert.equal(failed.outcome, "WAIT_RETRYABLE");
@@ -489,7 +554,72 @@ test("P5-10 — retry waits until its durable eligibility time and increments at
   const retried = await system.runtime.runCycle({ executionId, repository: "repo-synthetic" });
   assert.equal(retried.plannedAction.attempt, 2);
   assert.equal(calls, 2);
+  assert.equal(idempotencyKeys[0], idempotencyKeys[1]);
   assert.equal(retried.outcome, "WAIT_RETRYABLE");
+
+  now = Date.parse(retried.checkpoint.retry.nextEligibleAt);
+  const exhausted = await system.runtime.runCycle({ executionId, repository: "repo-synthetic" });
+  assert.equal(exhausted.plannedAction.attempt, 3);
+  assert.equal(exhausted.outcome, "BLOCKED_EXTERNAL");
+  assert.notEqual(exhausted.outcome, "DONE");
+  const restarted = system.makeRuntime({ clock: () => new Date(now).toISOString(), executorOverride: system.runtime.executor });
+  const afterExhaustion = await restarted.runtime.runCycle({ executionId, repository: "repo-synthetic" });
+  assert.equal(afterExhaustion.outcome, "BLOCKED_EXTERNAL");
+  assert.equal(calls, 3, "restart must not execute after the retry budget is exhausted");
+});
+
+test("P5-10 audit — permanent failure remains blocked after restart without another execution", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "loop-permanent-restart-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const system = makeRuntime(root, new LifecycleFacts());
+  const executionId = "repo:TASK-001:permanent-restart";
+  await system.runtime.runCycle({ executionId, repository: "repo-synthetic" });
+  let calls = 0;
+  const executor = {
+    reconcile: async () => ({ status: "NOT_STARTED" }),
+    execute: async () => {
+      calls += 1;
+      throw Object.assign(new Error("invalid provider request"), { classification: "PERMANENT" });
+    },
+  };
+  system.runtime.executor = executor;
+  const failed = await system.runtime.runCycle({ executionId, repository: "repo-synthetic" });
+  assert.equal(failed.outcome, "BLOCKED_EXTERNAL");
+  assert.equal(calls, 1);
+
+  const restarted = system.makeRuntime({ executorOverride: executor });
+  const resumed = await restarted.runtime.runCycle({ executionId, repository: "repo-synthetic" });
+  assert.equal(resumed.outcome, "BLOCKED_EXTERNAL");
+  assert.equal(calls, 1, "permanent failure must not execute again after restart");
+});
+
+test("P5-10 audit — crash after retry evidence cannot erase the retry deadline", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "loop-retry-crash-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const now = () => REVIEW_TIME;
+  const system = makeRuntime(root, new LifecycleFacts(), { clock: now });
+  const executionId = "repo:TASK-001:retry-crash";
+  await system.runtime.runCycle({ executionId, repository: "repo-synthetic" });
+  let calls = 0;
+  system.runtime.executor = {
+    reconcile: async () => ({ status: "NOT_STARTED" }),
+    execute: async () => { calls += 1; throw Object.assign(new Error("temporary outage"), { classification: "TRANSIENT" }); },
+  };
+  let crash = true;
+  system.runtime.faultInjector = (point) => {
+    if (crash && point === "after_action_result_before_checkpoint") {
+      crash = false;
+      throw new Error("injected retry checkpoint gap");
+    }
+  };
+  await assert.rejects(system.runtime.runCycle({ executionId, repository: "repo-synthetic" }), /injected retry checkpoint gap/);
+  assert.equal(system.checkpointStore.read(executionId).retry, null);
+  assert.ok(system.evidenceStore.listAll().some((event) => event.eventType === "ACTION_RESULT" && event.payload.result === "WAITING"));
+
+  const restarted = system.makeRuntime({ clock: now, executorOverride: system.runtime.executor });
+  const resumed = await restarted.runtime.runCycle({ executionId, repository: "repo-synthetic" });
+  assert.equal(resumed.outcome, "WAIT_RETRYABLE");
+  assert.equal(calls, 1);
 });
 
 test("P5-15/P5-16 — generated projections carry a marker and manual tampering is repaired", async (t) => {

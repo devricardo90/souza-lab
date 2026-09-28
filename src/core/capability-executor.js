@@ -16,12 +16,15 @@ export class FakeCapabilityExecutor extends CapabilityExecutor {
     this.capabilities = Object.freeze({ ...capabilities });
     this.provider = provider;
     this.completed = new Map();
+    this.pending = new Map();
     this.calls = [];
   }
 
   async reconcile(action, context) {
-    const result = this.completed.get(action.actionId);
-    if (result) return Object.freeze({ status: "COMPLETED", result });
+    const key = context?.idempotencyKey ?? action.actionId;
+    const result = this.completed.get(key);
+    if (result) return Object.freeze({ status: "COMPLETED", result: this.rebind(result, action) });
+    if (this.pending.has(key)) return Object.freeze({ status: "IN_PROGRESS" });
     const capability = this.capabilities[action.actionType];
     if (typeof capability?.reconcile === "function") {
       const value = await capability.reconcile(action, context);
@@ -32,29 +35,51 @@ export class FakeCapabilityExecutor extends CapabilityExecutor {
   }
 
   async execute(action, context) {
-    const prior = this.completed.get(action.actionId);
-    if (prior) return prior;
+    const key = context?.idempotencyKey ?? action.actionId;
+    const prior = this.completed.get(key);
+    if (prior) return this.rebind(prior, action);
+    const pending = this.pending.get(key);
+    if (pending) return this.rebind(await pending, action);
     const capability = this.capabilities[action.actionType];
     if (typeof capability !== "function") throw Object.assign(new Error(`capability ${action.actionType} is unavailable`), { classification: "EXTERNAL_BLOCK" });
     this.calls.push(action.actionType);
     const startedAt = new Date().toISOString();
-    const output = await capability(action, context);
-    const result = makeActionResult({
+    const operation = (async () => {
+      const output = await capability(action, context);
+      return makeActionResult({
+        actionId: action.actionId,
+        executionId: action.executionId,
+        cycleId: action.cycleId,
+        taskId: action.taskId,
+        candidateRevision: action.candidateRevision,
+        result: "SUCCEEDED",
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        provider: this.provider,
+        outputReference: output?.outputReference ?? action.actionId,
+        value: output?.value ?? output ?? null,
+        retryable: false,
+      });
+    })();
+    this.pending.set(key, operation);
+    try {
+      const result = await operation;
+      this.completed.set(key, result);
+      return this.rebind(result, action);
+    } finally {
+      this.pending.delete(key);
+    }
+  }
+
+  rebind(result, action) {
+    return makeActionResult({
+      ...result,
       actionId: action.actionId,
       executionId: action.executionId,
       cycleId: action.cycleId,
       taskId: action.taskId,
       candidateRevision: action.candidateRevision,
-      result: "SUCCEEDED",
-      startedAt,
-      finishedAt: new Date().toISOString(),
-      provider: this.provider,
-      outputReference: output?.outputReference ?? action.actionId,
-      value: output?.value ?? output ?? null,
-      retryable: false,
     });
-    this.completed.set(action.actionId, result);
-    return result;
   }
 }
 

@@ -104,11 +104,18 @@ It does not manually set computed states. Fake capabilities mutate synthetic pro
 2. Asynchronous reconciliation lacked a deadline even though execution was bounded. Both operations now have deadlines and transient timeout classification. A never-resolving reconcile provider is tested and cannot invoke the capability.
 3. A checkpoint task ID could override task-system order. A regression reproduced selection of `TASK-002` while `TASK-001` remained eligible. Recovery now treats checkpoint task ID as a hint: it may resume the currently selected task or finish that task after the task source marks it complete; it cannot skip ahead. The checkpoint’s stored state remains non-authoritative.
 
-Each correction remains covered by permanent tests. After corrections, Microtest 002, Phase 4 regressions, Microtest 001, and the full suite were rerun.
+Each correction remains covered by permanent tests. The independent acceptance audit found three additional runtime defects and added permanent regressions:
+
+4. Two concurrent `runCycle()` calls for the same execution could both reconcile `NOT_STARTED` and issue duplicate merges. Calls are now serialized by execution ID inside one `LoopRuntime` instance; an overlapping-cycle regression asserts one merge call.
+5. Idempotency keys included the attempt number, so retrying the same logical operation changed its provider key. Keys now bind repository, execution, task, action type, and input fingerprint, while remaining stable across attempts. A regression checks retries reuse the key.
+6. A crash after a retry result was appended but before the checkpoint write lost the retry deadline. Retry schedule metadata is now part of the hash-chained `ACTION_RESULT` event and recovered before another action; a restart regression proves the provider is not called early.
+7. Restart after a permanent failure or exhausted transient retry budget could execute the same logical operation again. Runtime now restores terminal retry classifications from durable action-result evidence and blocks further execution. Regressions prove restart does not repeat permanent or exhausted actions.
+
+The late-capability regression uses a controlled deferred operation rather than a wall-clock race. It proves the same executor reports/reconciles an in-flight action instead of issuing a second call. The serialization guarantee is process-local to a single runtime instance; no cross-process execution lease is implemented.
 
 ## Performance investigation
 
-The slow work is concentrated in Git-backed temporary-repository tests, which launch several Git child processes per fixture. Observed individual Git fixture tests took roughly 6–10 seconds in full-suite runs; Microtest 001 took about 70–81 seconds under the observed Windows test workload. The final full suite took about 82 seconds. No test hung or skipped. Local Git subprocesses and fixture Git helpers now have a 15-second timeout; runtime capability execution and reconciliation use a bounded timeout. The earlier reported ~11-minute result was not reproduced sequentially. Because no process trace from that earlier run exists, its exact cause is unproven; overlapping duplicate Git-heavy suites is consistent with the observed slowdown, not proven as its sole cause.
+The slow work is concentrated in Git-backed temporary-repository tests, which launch several Git child processes per fixture. Microtest 001 ranged from 27 to 104 seconds across this audit's runs (its slowest subtest reached 39 seconds in one run); the final full suite took 27 seconds. Phase 4 tests took 0.5–2.2 seconds. Runtime capability execution and reconciliation have bounded deadlines, and local Git subprocesses and fixture Git helpers use a 15-second timeout. The earlier ~11-minute result was not reproduced as a single hang; the wide timing spread indicates variable Windows/Git fixture performance, not a fixed runtime. No command exceeded the bounded test/process controls.
 
 ## Verification results
 
@@ -116,15 +123,19 @@ All commands were run sequentially after the final runtime corrections:
 
 | Command | Tests | Passed | Failed | Skipped | Result |
 |---|---:|---:|---:|---:|---|
-| `node --test tests/microtest-002.test.js tests/runtime-contracts.test.js` | 22 | 22 | 0 | 0 | PASS |
+| `node --test tests/microtest-002.test.js tests/runtime-contracts.test.js` | 26 | 26 | 0 | 0 | PASS, 9 seconds |
 | `node --test tests/phase4-failure-injection.test.js tests/jsonl-evidence-store.test.js` | 35 | 35 | 0 | 0 | PASS |
-| `node --test tests/microtest-001.test.js` | 9 (8 acceptance subtests) | 9 | 0 | 0 | PASS |
-| `npm test` | 92 | 92 | 0 | 0 | PASS |
+| `node --test tests/microtest-001.test.js` | 9 (8 acceptance subtests) | 9 | 0 | 0 | PASS, 27 seconds |
+| `node --test tests/microtest-002.test.js` | 23 | 23 | 0 | 0 | PASS, 11 seconds |
+| `npm test` | 96 | 96 | 0 | 0 | PASS, 27 seconds |
+
+The standalone Microtest 002 run before the deterministic test adjustment initially exposed a timing-sensitive test (21 passed, 1 failed), not a production failure: its fixed 300 ms delay could complete while the Windows runner was delayed. It was replaced with a manually released pending operation and zero-delay retry policy. The test harness then captured two real restart defects (permanent failure and retry exhaustion caused another provider call); both were corrected and are included in all final runs above. No mandatory test was skipped.
 
 ## Known limitations
 
 - All execution capabilities and external facts in Microtest 002 are deterministic fakes. No real code-writing agent, review provider, CI service, SCM merge, or scheduler is connected.
 - Safe retry of a real side effect depends on a production executor honoring idempotency keys and accurately reconciling provider facts. The fake executor is process-local; no multi-process lease/lock is implemented.
+- A timeout aborts via `AbortSignal` and stops the runtime from waiting, but JavaScript cannot forcibly terminate an arbitrary adapter promise. A real adapter that ignores cancellation must still provide durable idempotency and reconciliation; otherwise its timed-out operation could complete later. Current tests demonstrate the fake executor's pending-operation reconciliation, not arbitrary third-party adapter cancellation.
 - The local evidence anchor protects against accidental/partial history loss only when its storage remains trusted independently from the JSONL log. It does not defend against coordinated rewriting of both.
 - Runtime checkpoint JSON is schema-validated, but the checkpoint itself is a recovery hint rather than an authenticated truth source. Provider facts, task-system ordering, and evidence are recomputed.
 - Runtime authority-provider contracts are currently synchronous. Local Git calls are bounded; asynchronous capability execute/reconcile calls are bounded. A future asynchronous task/CI/SCM adapter needs its own deadlines and cancellation behavior.

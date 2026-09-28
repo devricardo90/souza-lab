@@ -63,6 +63,7 @@ export class LoopRuntime {
     this.clock = clock;
     this.faultInjector = faultInjector;
     this.cycleCount = new Map();
+    this.executionQueues = new Map();
   }
 
   async inject(point, data) {
@@ -103,6 +104,26 @@ export class LoopRuntime {
     return attempts + 1;
   }
 
+  retryFromEvidence(planned) {
+    const latest = this.evidenceStore.listAll().findLast((event) => event.eventType === "ACTION_RESULT"
+      && event.payload?.inputFingerprint === planned.inputFingerprint
+      && (event.payload?.result === "FAILED" || event.payload?.result === "WAITING"));
+    const retry = latest?.payload?.retry;
+    if (!latest) return null;
+    if (!retry || !["WAIT_RETRYABLE", "BLOCKED_OWNER", "BLOCKED_EXTERNAL"].includes(retry.outcome)) {
+      return {
+        outcome: "BLOCKED_EXTERNAL",
+        classification: "INVARIANT_VIOLATION",
+        lastFailure: "prior failed action has no valid durable retry classification",
+      };
+    }
+    if (retry.outcome === "WAIT_RETRYABLE"
+      && (typeof retry.nextEligibleAt !== "string" || !Number.isFinite(Date.parse(retry.nextEligibleAt)))) {
+      throw new RuntimeError("retry evidence has an invalid eligibility timestamp", "INVALID_RETRY_EVIDENCE");
+    }
+    return retry;
+  }
+
   async checkpoint(executionId, cycleId, observation, action, retry = null) {
     const tail = this.evidenceStore.getIntegrityCheckpoint();
     return this.checkpointStore.write(makeRuntimeCheckpoint({
@@ -122,7 +143,24 @@ export class LoopRuntime {
     }));
   }
 
-  async runCycle({ executionId, repository, maxCyclesHint = null } = {}) {
+  async runCycle(options = {}) {
+    const executionId = options.executionId;
+    if (typeof executionId !== "string" || executionId.trim() === "") throw new TypeError("executionId is required");
+    const previous = this.executionQueues.get(executionId) ?? Promise.resolve();
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const queued = previous.then(() => gate);
+    this.executionQueues.set(executionId, queued);
+    await previous;
+    try {
+      return await this.runCycleExclusive(options);
+    } finally {
+      release();
+      if (this.executionQueues.get(executionId) === queued) this.executionQueues.delete(executionId);
+    }
+  }
+
+  async runCycleExclusive({ executionId, repository, maxCyclesHint = null } = {}) {
     if (typeof executionId !== "string" || executionId.trim() === "") throw new TypeError("executionId is required");
     if (typeof repository !== "string" || repository.trim() === "") throw new TypeError("repository identity is required");
     const now = this.clock();
@@ -141,8 +179,9 @@ export class LoopRuntime {
       action: planned, taskId: planned.taskId, revisionHead: planned.candidateRevision,
       payload: { repository, preconditions: planned.preconditions, attempt: planned.attempt },
     });
+    const recoveredRetry = this.retryFromEvidence(planned);
     await this.appendEvidence(plannedEvent);
-    await this.checkpoint(executionId, cycleId, observation, planned, previousCheckpoint?.retry ?? null);
+    await this.checkpoint(executionId, cycleId, observation, planned, recoveredRetry);
     await this.inject("after_planning_before_execution", { observation, plannedAction: planned });
 
     let actionResult = null;
@@ -153,10 +192,13 @@ export class LoopRuntime {
       outcome = TERMINAL.get(observation.computed.state);
     }
     const eventIds = [plannedEvent.eventId];
-    const retryNotDue = previousCheckpoint?.retry?.nextEligibleAt && Date.parse(previousCheckpoint.retry.nextEligibleAt) > Date.parse(now);
+    const retryNotDue = recoveredRetry?.nextEligibleAt && Date.parse(recoveredRetry.nextEligibleAt) > Date.parse(now);
     if (retryNotDue) {
-      retry = previousCheckpoint.retry;
+      retry = recoveredRetry;
       outcome = "WAIT_RETRYABLE";
+    } else if (recoveredRetry && recoveredRetry.outcome !== "WAIT_RETRYABLE") {
+      retry = recoveredRetry;
+      outcome = recoveredRetry.outcome;
     } else if (outcome === "CONTINUE" && ["WAIT", "ESCALATE_OWNER", "ESCALATE_EXTERNAL", "COMPLETE"].includes(planned.actionType)) {
       if (planned.actionType === "WAIT") outcome = "WAIT_RETRYABLE";
       else if (planned.actionType === "ESCALATE_OWNER") outcome = "BLOCKED_OWNER";
@@ -164,7 +206,14 @@ export class LoopRuntime {
       else outcome = "DONE";
     } else if (outcome === "CONTINUE") {
       const evidenceResult = this.evidenceStore.getById(`${planned.actionId}:result`);
-      const context = { repository, executionId, cycleId, idempotencyKey: planned.actionId, observation, timeoutMs: this.timeoutMs };
+      const idempotencyKey = fingerprint({
+        repository: planned.repository,
+        executionId: planned.executionId,
+        taskId: planned.taskId,
+        actionType: planned.actionType,
+        inputFingerprint: planned.inputFingerprint,
+      });
+      const context = { repository, executionId, cycleId, idempotencyKey, observation, timeoutMs: this.timeoutMs };
       const fresh = this.observer.observe({ executionId, repository, cycleId, checkpoint: previousCheckpoint, now: this.clock() });
       const freshFingerprint = executionFactsFingerprint(fresh.recovery?.facts ?? {});
       if (fresh.computed.state !== planned.preconditions.computedState
@@ -247,6 +296,15 @@ export class LoopRuntime {
             result: actionResult.result, provider: actionResult.provider, outputReference: actionResult.outputReference,
             errorClass: actionResult.errorClass, retryable: actionResult.retryable,
             attempt: planned.attempt, repository, startedAt: actionResult.startedAt, finishedAt: actionResult.finishedAt,
+            retry: retry ? {
+              outcome: retry.outcome,
+              classification: retry.classification,
+              attempt: retry.attempt,
+              maxAttempts: retry.maxAttempts ?? null,
+              nextEligibleAt: retry.nextEligibleAt ?? null,
+              lastFailure: retry.lastFailure,
+              wakeup: retry.wakeup ?? null,
+            } : null,
           },
         });
         await this.appendEvidence(resultEvent);
