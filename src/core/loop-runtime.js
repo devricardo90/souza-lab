@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { ACTION_RECONCILIATION, makeActionResult, makeExecutionOutcome, makeRuntimeCheckpoint, makeRuntimeCycle, makePlannedAction, fingerprint, executionFactsFingerprint } from "./runtime-contracts.js";
 import { makeEvidenceEvent } from "./contracts.js";
 import { ActionPlanner } from "./action-planner.js";
@@ -43,6 +44,7 @@ function validateSuccessResult(value, action) {
 export class LoopRuntime {
   constructor({
     observer, executor, evidenceStore, evidenceCheckpointProvider, checkpointStore,
+    leaseProvider, ownerId = randomUUID(), leaseTtlMs = 120000,
     planner = new ActionPlanner(), retryPolicy = new RuntimeRetryPolicy(), wakeupProvider = null,
     timeoutMs = 30000, clock = () => new Date().toISOString(), faultInjector = () => {},
   } = {}) {
@@ -50,12 +52,21 @@ export class LoopRuntime {
     if (typeof evidenceStore?.append !== "function" || typeof evidenceStore?.getById !== "function" || typeof evidenceStore?.listAll !== "function") throw new TypeError("LoopRuntime requires durable EvidenceStore");
     if (typeof evidenceCheckpointProvider?.publishCheckpoint !== "function") throw new TypeError("LoopRuntime requires EvidenceCheckpointProvider");
     if (typeof checkpointStore?.read !== "function" || typeof checkpointStore?.write !== "function") throw new TypeError("LoopRuntime requires RuntimeCheckpointStore");
+    if (typeof leaseProvider?.acquire !== "function" || typeof leaseProvider?.renew !== "function"
+      || typeof leaseProvider?.release !== "function" || typeof leaseProvider?.inspect !== "function") {
+      throw new TypeError("LoopRuntime requires ExecutionLeaseProvider with acquire/renew/release/inspect");
+    }
+    if (typeof ownerId !== "string" || ownerId.trim() === "") throw new TypeError("runtime ownerId is required");
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1) throw new TypeError("timeoutMs must be positive");
+    if (!Number.isSafeInteger(leaseTtlMs) || leaseTtlMs <= timeoutMs) throw new TypeError("leaseTtlMs must exceed timeoutMs");
     this.observer = observer;
     this.executor = executor;
     this.evidenceStore = evidenceStore;
     this.evidenceCheckpointProvider = evidenceCheckpointProvider;
     this.checkpointStore = checkpointStore;
+    this.leaseProvider = leaseProvider;
+    this.ownerId = ownerId;
+    this.leaseTtlMs = leaseTtlMs;
     this.planner = planner;
     this.retryPolicy = retryPolicy;
     this.wakeupProvider = wakeupProvider;
@@ -152,17 +163,59 @@ export class LoopRuntime {
     const queued = previous.then(() => gate);
     this.executionQueues.set(executionId, queued);
     await previous;
+    let lease = null;
     try {
-      return await this.runCycleExclusive(options);
+      const repository = options.repository;
+      if (typeof repository !== "string" || repository.trim() === "") throw new TypeError("repository identity is required");
+      const checkpoint = this.checkpointStore.read(executionId);
+      const leaseObservation = this.observer.observe({
+        executionId,
+        repository,
+        cycleId: `${executionId}:lease-observation`,
+        checkpoint,
+        now: this.clock(),
+      });
+      lease = await this.leaseProvider.acquire({
+        repository,
+        taskId: leaseObservation.computed.taskId ?? "none",
+        executionId,
+        ownerId: this.ownerId,
+        ttlMs: this.leaseTtlMs,
+      });
+      await this.assertLeaseCurrent(lease);
+      return await this.runCycleExclusive({ ...options, lease });
     } finally {
-      release();
-      if (this.executionQueues.get(executionId) === queued) this.executionQueues.delete(executionId);
+      try {
+        if (lease) await this.leaseProvider.release(lease);
+      } finally {
+        release();
+        if (this.executionQueues.get(executionId) === queued) this.executionQueues.delete(executionId);
+      }
     }
   }
 
-  async runCycleExclusive({ executionId, repository, maxCyclesHint = null } = {}) {
+  async assertLeaseCurrent(lease) {
+    const status = await this.leaseProvider.inspect(lease);
+    if (!status?.active || !status.lease
+      || status.lease.leaseId !== lease.leaseId
+      || status.lease.ownerId !== lease.ownerId
+      || status.lease.fencingToken !== lease.fencingToken
+      || status.lease.repository !== lease.repository
+      || status.lease.executionId !== lease.executionId) {
+      const error = new Error("execution lease is unavailable, expired, or fenced by a newer owner");
+      error.name = "StaleExecutionLeaseError";
+      error.classification = "INVARIANT_VIOLATION";
+      error.retryable = false;
+      throw error;
+    }
+    return true;
+  }
+
+  async runCycleExclusive({ executionId, repository, lease, maxCyclesHint = null } = {}) {
     if (typeof executionId !== "string" || executionId.trim() === "") throw new TypeError("executionId is required");
     if (typeof repository !== "string" || repository.trim() === "") throw new TypeError("repository identity is required");
+    if (!lease) throw new RuntimeError("execution lease is required", "LEASE_REQUIRED");
+    await this.assertLeaseCurrent(lease);
     const now = this.clock();
     const previousCheckpoint = this.checkpointStore.read(executionId);
     const cycleId = this.nextCycleId(executionId, previousCheckpoint);
@@ -213,7 +266,13 @@ export class LoopRuntime {
         actionType: planned.actionType,
         inputFingerprint: planned.inputFingerprint,
       });
-      const context = { repository, executionId, cycleId, idempotencyKey, observation, timeoutMs: this.timeoutMs };
+      let activeLease = lease;
+      const context = {
+        repository, executionId, cycleId, idempotencyKey, observation, timeoutMs: this.timeoutMs,
+        lease: activeLease,
+        fencingToken: activeLease.fencingToken,
+        assertLeaseCurrent: () => this.assertLeaseCurrent(activeLease),
+      };
       const fresh = this.observer.observe({ executionId, repository, cycleId, checkpoint: previousCheckpoint, now: this.clock() });
       const freshFingerprint = executionFactsFingerprint(fresh.recovery?.facts ?? {});
       if (fresh.computed.state !== planned.preconditions.computedState
@@ -269,6 +328,13 @@ export class LoopRuntime {
           });
         } else {
           try {
+            activeLease = await this.leaseProvider.renew(activeLease, {
+              ttlMs: this.leaseTtlMs,
+              taskId: planned.taskId ?? "none",
+            });
+            context.lease = activeLease;
+            context.fencingToken = activeLease.fencingToken;
+            await context.assertLeaseCurrent();
             const output = await executeWithTimeout(this.executor, planned, context, this.timeoutMs);
             actionResult = validateSuccessResult(output, planned);
             await this.inject("after_provider_success_before_evidence", { observation, plannedAction: planned, actionResult });

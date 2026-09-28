@@ -11,6 +11,7 @@ import { RuntimeRetryPolicy } from "../src/core/retry-policy.js";
 import { FakeCapabilityExecutor } from "../src/core/capability-executor.js";
 import { FakeEvidenceStore } from "../src/testing/fake-providers.js";
 import { LocalEvidenceCheckpointProvider } from "../src/adapters/local-evidence-checkpoint-provider.js";
+import { LocalExecutionLeaseProvider } from "../src/adapters/local-execution-lease-provider.js";
 import { JsonRuntimeCheckpointStore } from "../src/adapters/json-runtime-checkpoint-store.js";
 import { MarkdownProjectionStore } from "../src/adapters/markdown-projection-store.js";
 import { resolveNextTask } from "../src/adapters/markdown-task-adapter.js";
@@ -126,9 +127,11 @@ function makeRuntime(root, facts, { faultInjector = () => {}, executorOverride =
   };
   const executor = executorOverride ?? shared?.executor ?? new FakeCapabilityExecutor({ capabilities, provider: "microtest-002" });
   const checkpointStore = new JsonRuntimeCheckpointStore({ path: join(root, "runtime-checkpoint.json") });
+  const leaseProvider = new LocalExecutionLeaseProvider({ directory: join(root, "execution-leases"), clock });
   const runtime = new LoopRuntime({
     observer, executor, evidenceStore, evidenceCheckpointProvider,
     checkpointStore,
+    leaseProvider,
     retryPolicy: retryPolicy ?? new RuntimeRetryPolicy({ maxAttempts: 3, baseDelayMs: 100, maxDelayMs: 1000 }),
     timeoutMs, faultInjector, wakeupProvider, clock,
   });
@@ -412,6 +415,80 @@ test("P5-13 audit — overlapping cycles for one execution cannot issue duplicat
   ]);
   assert.equal(facts.calls.filter((value) => value === "merge").length, 1);
   assert.equal(results.filter((value) => value.status === "fulfilled").length, 2);
+});
+
+test("P6-A — independent runtimes contend on the durable lease before merge", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "loop-two-runtime-lease-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const facts = new LifecycleFacts();
+  const first = makeRuntime(root, facts);
+  const executionId = "repo:TASK-001:two-runtime-lease";
+  let ready = false;
+  for (let index = 0; index < 30 && !ready; index += 1) {
+    const cycle = await first.runtime.runCycle({ executionId, repository: "repo-synthetic" });
+    ready = cycle.nextComputed.state === "READY_TO_MERGE" && !cycle.nextComputed.projectionMismatch;
+  }
+  assert.equal(ready, true);
+  const originalExecutor = first.executor;
+  let enteredMerge;
+  const mergeEntered = new Promise((resolve) => { enteredMerge = resolve; });
+  let releaseMerge;
+  const mergeGate = new Promise((resolve) => { releaseMerge = resolve; });
+  first.runtime.executor = {
+    reconcile: (action, context) => originalExecutor.reconcile(action, context),
+    execute: async (action, context) => {
+      if (action.actionType === "PREPARE_MERGE") {
+        await context.assertLeaseCurrent();
+        enteredMerge();
+        await mergeGate;
+      }
+      return originalExecutor.execute(action, context);
+    },
+  };
+  const firstPromise = first.runtime.runCycle({ executionId, repository: "repo-synthetic" });
+  await mergeEntered;
+  const second = first.makeRuntime({ executorOverride: originalExecutor });
+  await assert.rejects(second.runtime.runCycle({ executionId, repository: "repo-synthetic" }), { code: "EXECUTION_LEASE_UNAVAILABLE" });
+  assert.equal(facts.calls.filter((call) => call === "merge").length, 0);
+  releaseMerge();
+  const completed = await firstPromise;
+  assert.equal(completed.actionResult.result, "SUCCEEDED");
+  assert.equal(facts.calls.filter((call) => call === "merge").length, 1);
+});
+
+test("P6-A — an expired runtime cannot execute with its stale fencing token", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "loop-stale-runtime-lease-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  let nowMs = Date.parse(REVIEW_TIME);
+  const clock = () => new Date(nowMs).toISOString();
+  const facts = new LifecycleFacts();
+  const first = makeRuntime(root, facts, { clock });
+  const executionId = "repo:TASK-001:stale-runtime-lease";
+  let ready = false;
+  for (let index = 0; index < 30 && !ready; index += 1) {
+    const cycle = await first.runtime.runCycle({ executionId, repository: "repo-synthetic" });
+    ready = cycle.nextComputed.state === "READY_TO_MERGE" && !cycle.nextComputed.projectionMismatch;
+  }
+  assert.equal(ready, true);
+  const replacementProvider = new LocalExecutionLeaseProvider({ directory: join(root, "execution-leases"), clock });
+  const baseExecutor = first.executor;
+  first.runtime.executor = {
+    reconcile: async (action, context) => {
+      if (action.actionType === "PREPARE_MERGE") {
+        nowMs += first.runtime.leaseTtlMs + 1;
+        const replacement = replacementProvider.acquire({
+          repository: "repo-synthetic", taskId: "TASK-001", executionId,
+          ownerId: "runtime-B", ttlMs: first.runtime.leaseTtlMs,
+        });
+        assert.equal(replacement.fencingToken > context.fencingToken, true);
+      }
+      return baseExecutor.reconcile(action, context);
+    },
+    execute: (action, context) => baseExecutor.execute(action, context),
+  };
+  await assert.rejects(first.runtime.runCycle({ executionId, repository: "repo-synthetic" }), { code: "STALE_EXECUTION_LEASE" });
+  assert.equal(facts.calls.filter((call) => call === "merge").length, 0);
+  assert.equal(facts.merge, null);
 });
 
 test("P5-06 — malformed reconciliation cannot be treated as NOT_STARTED or successful", async (t) => {

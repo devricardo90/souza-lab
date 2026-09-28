@@ -205,3 +205,25 @@ export function makeWakeupRequest(input) {
     state: oneOf(value.state, LOOP_STATES, "WakeupRequest.state"),
   });
 }
+
+export function makeExecutionLease(input) {
+  const value = object(input, "ExecutionLease");
+  if (!Number.isSafeInteger(value.fencingToken) || value.fencingToken < 1) {
+    throw new RuntimeContractError("ExecutionLease.fencingToken", "must be a positive safe integer");
+  }
+  const acquiredAt = timestamp(value.acquiredAt, "ExecutionLease.acquiredAt");
+  const expiresAt = timestamp(value.expiresAt, "ExecutionLease.expiresAt");
+  if (Date.parse(expiresAt) <= Date.parse(acquiredAt)) {
+    throw new RuntimeContractError("ExecutionLease.expiresAt", "must be after acquiredAt");
+  }
+  return Object.freeze({
+    repository: text(value.repository, "ExecutionLease.repository"),
+    taskId: text(value.taskId, "ExecutionLease.taskId"),
+    executionId: text(value.executionId, "ExecutionLease.executionId"),
+    ownerId: text(value.ownerId, "ExecutionLease.ownerId"),
+    leaseId: text(value.leaseId, "ExecutionLease.leaseId"),
+    fencingToken: value.fencingToken,
+    acquiredAt,
+    expiresAt,
+  });
+}

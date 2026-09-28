@@ -301,6 +301,13 @@ export class WakeupProvider extends ProviderContract {
   listDue() { return this.notImplemented("listDue"); }
 }
 
+export class ExecutionLeaseProvider extends ProviderContract {
+  acquire() { return this.notImplemented("acquire"); }
+  renew() { return this.notImplemented("renew"); }
+  release() { return this.notImplemented("release"); }
+  inspect() { return this.notImplemented("inspect"); }
+}
+
 export class StateEngine extends ProviderContract {
   compute() { return this.notImplemented("compute"); }
   recover() { return this.notImplemented("recover"); }
