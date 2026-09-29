@@ -219,6 +219,23 @@ export function makeMergeFact(input, path = "MergeFact") {
   });
 }
 
+export function makePullRequestFact(input, path = "PullRequestFact") {
+  const value = record(input, path);
+  return Object.freeze({
+    status: enumValue(value.status, ["ABSENT", "OPEN", "CLOSED", "MERGED", "UNKNOWN"], `${path}.status`),
+    taskId: nonEmptyString(value.taskId, `${path}.taskId`),
+    candidateHead: nonEmptyString(value.candidateHead, `${path}.candidateHead`),
+    headSha: value.headSha == null ? null : nonEmptyString(value.headSha, `${path}.headSha`),
+    branch: value.branch == null ? null : nonEmptyString(value.branch, `${path}.branch`),
+    number: value.number == null ? null : (() => {
+      if (!Number.isSafeInteger(value.number) || value.number < 1) throw new ContractError(`${path}.number`, "must be a positive integer");
+      return value.number;
+    })(),
+    mergeable: value.mergeable == null ? null : Boolean(value.mergeable),
+    url: value.url == null ? null : nonEmptyString(value.url, `${path}.url`),
+  });
+}
+
 export function makeEvidenceEvent(input, path = "EvidenceEvent") {
   const value = record(input, path);
   const eventType = enumValue(value.eventType, EVIDENCE_EVENT_TYPES, `${path}.eventType`);
@@ -267,6 +284,7 @@ export class GitProvider extends ProviderContract {
 
 export class SCMProvider extends ProviderContract {
   getMergeFact() { return this.notImplemented("getMergeFact"); }
+  getPullRequestFact() { return null; }
 }
 
 export class CIProvider extends ProviderContract {

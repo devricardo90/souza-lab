@@ -3,7 +3,7 @@ import { LOOP_STATES } from "./contracts.js";
 
 export const RUNTIME_ACTIONS = Object.freeze([
   "NO_OP", "LOAD_TASK", "PREPARE_SPEC", "REQUEST_SPEC_REVIEW",
-  "PREPARE_IMPLEMENTATION", "RUN_TESTS", "RUN_VALIDATION", "REQUEST_REVIEW",
+  "PREPARE_IMPLEMENTATION", "CREATE_PULL_REQUEST", "RUN_TESTS", "RUN_VALIDATION", "REQUEST_REVIEW",
   "PREPARE_MERGE", "RUN_POST_MERGE_VALIDATION", "WRITE_PROJECTIONS", "WAIT",
   "ESCALATE_OWNER", "ESCALATE_EXTERNAL", "COMPLETE",
 ]);
@@ -59,7 +59,7 @@ export function fingerprint(value) {
 export function executionFactsFingerprint(facts = {}) {
   const stable = Object.fromEntries([
     "task", "completedTaskIds", "revision", "specRevision", "specDigest", "specReview",
-    "ci", "validation", "review", "merge", "postMergeValidation",
+    "ci", "validation", "review", "pullRequest", "merge", "postMergeValidation",
   ].filter((key) => facts[key] !== undefined).map((key) => [key, facts[key]]));
   return fingerprint(stable);
 }

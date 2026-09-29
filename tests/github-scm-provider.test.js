@@ -91,12 +91,16 @@ test("GitHub SCM provider normalizes repository, branch, PR and merge facts", ()
     repository: REPOSITORY, defaultBranch: "main", private: true, url: `https://github.com/${REPOSITORY}`,
   });
   assert.equal(provider.getBranchFacts("loop/TASK-001/exec-1").headSha, HEAD);
+  assert.equal(provider.getPullRequestFact(TASK, HEAD).status, "OPEN");
+  assert.equal(provider.getPullRequestFact(TASK, HEAD_B).status, "UNKNOWN");
   assert.equal(provider.getMergeFact(TASK, HEAD).status, "NOT_STARTED");
   fixture.pr = rawPull({ state: "closed", merged: true });
   assert.deepEqual(provider.getMergeFact(TASK, HEAD), {
     status: "MERGED", merged: true, candidateHead: HEAD, mergeCommit: MERGE, mergedAt: "2026-09-28T11:00:00.000Z",
   });
   assert.equal(provider.getMergeFact(TASK, HEAD_B).status, "UNKNOWN");
+  fixture.pr = null;
+  assert.equal(provider.getPullRequestFact(TASK, HEAD).status, "ABSENT");
 });
 
 test("GitHub PR creation rediscovers by branch/head and requires a current lease before mutation", async () => {

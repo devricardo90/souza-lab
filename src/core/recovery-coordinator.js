@@ -101,6 +101,7 @@ export class RecoveryCoordinator {
     let ci = null;
     let validation = null;
     let review = null;
+    let pullRequest = null;
     let merge = null;
     let postMergeValidation = null;
     let providerFailure = null;
@@ -110,6 +111,9 @@ export class RecoveryCoordinator {
       ci = revision ? ciProvider.getCIResult(revision.head) : null;
       validation = revision ? validationProvider.getValidationResult(task.id, revision.head) : null;
       review = revision ? reviewProvider.getReviewResult(revision.head) : null;
+      pullRequest = revision && typeof scmProvider.getPullRequestFact === "function"
+        ? scmProvider.getPullRequestFact(task.id, revision.head)
+        : null;
       merge = revision ? scmProvider.getMergeFact(task.id, revision.head) : null;
       postMergeValidation = merge?.merged
         ? validationProvider.getValidationResult(task.id, merge.mergeCommit)
@@ -128,6 +132,7 @@ export class RecoveryCoordinator {
       ci,
       validation,
       review,
+      pullRequest,
       merge,
       postMergeValidation,
       stateProjection,

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { SCMProvider, makeMergeFact } from "../core/contracts.js";
+import { SCMProvider, makeMergeFact, makePullRequestFact } from "../core/contracts.js";
 
 function redact(value) {
   return String(value ?? "").replace(/\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g, "[REDACTED]")
@@ -153,6 +153,22 @@ export class GitHubSCMProvider extends SCMProvider {
       return Object.freeze({ ...pr, headMatches: false });
     }
     return pr ? Object.freeze({ ...pr, headMatches: true }) : null;
+  }
+
+  getPullRequestFact(taskId, candidateHead) {
+    const expected = sha(candidateHead, "candidate HEAD");
+    const marker = `<!-- loop-task:${taskId} -->`;
+    const taskPulls = this.listPullRequests({ state: "all", base: this.baseBranch })
+      .filter((pr) => pr.body.includes(marker));
+    if (taskPulls.length > 1) throw new GitHubSCMError("multiple task pull requests exist", "GITHUB_AMBIGUOUS_PULL_REQUEST");
+    const pr = taskPulls[0];
+    if (!pr) return makePullRequestFact({ status: "ABSENT", taskId, candidateHead: expected });
+    const matches = pr.headSha === expected;
+    const status = !matches ? "UNKNOWN" : pr.merged ? "MERGED" : pr.state === "closed" ? "CLOSED" : "OPEN";
+    return makePullRequestFact({
+      status, taskId, candidateHead: expected, headSha: pr.headSha,
+      branch: pr.headBranch, number: pr.number, mergeable: pr.mergeable, url: pr.url,
+    });
   }
 
   getMergeFact(taskId, candidateHead) {
