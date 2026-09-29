@@ -49,17 +49,22 @@ function toPullRequest(value) {
   const head = object(pr.head, "pull request head");
   const base = object(pr.base, "pull request base");
   const user = object(pr.user, "pull request author");
+  const mergedAtPresent = Object.hasOwn(pr, "merged_at");
   if (!Number.isSafeInteger(pr.number) || pr.number < 1
     || !["open", "closed"].includes(pr.state)
-    || typeof pr.merged !== "boolean"
+    || (typeof pr.merged !== "boolean" && (!mergedAtPresent || (pr.merged_at !== null && typeof pr.merged_at !== "string")))
     || typeof head.ref !== "string" || typeof base.ref !== "string"
     || typeof user.login !== "string") {
     throw new GitHubSCMError("pull request has an unexpected response schema", "GITHUB_INVALID_SCHEMA");
   }
+  const merged = typeof pr.merged === "boolean" ? pr.merged : typeof pr.merged_at === "string";
+  if ((pr.merged === false && typeof pr.merged_at === "string") || (pr.state === "open" && merged)) {
+    throw new GitHubSCMError("pull request state contradicts its merge facts", "GITHUB_INVALID_SCHEMA");
+  }
   return Object.freeze({
     number: pr.number,
     state: pr.state,
-    merged: pr.merged,
+    merged,
     headSha: sha(head.sha, "pull request head"),
     headBranch: head.ref,
     baseBranch: base.ref,
@@ -155,11 +160,12 @@ export class GitHubSCMProvider extends SCMProvider {
     return pr ? Object.freeze({ ...pr, headMatches: true }) : null;
   }
 
-  getPullRequestFact(taskId, candidateHead) {
+  getPullRequestFact(taskId, candidateHead, executionId = null) {
     const expected = sha(candidateHead, "candidate HEAD");
-    const marker = `<!-- loop-task:${taskId} -->`;
+    const markers = [`<!-- loop-task:${taskId} -->`];
+    if (executionId !== null) markers.push(`<!-- loop-execution:${executionId} -->`);
     const taskPulls = this.listPullRequests({ state: "all", base: this.baseBranch })
-      .filter((pr) => pr.body.includes(marker));
+      .filter((pr) => markers.every((marker) => pr.body.includes(marker)));
     if (taskPulls.length > 1) throw new GitHubSCMError("multiple task pull requests exist", "GITHUB_AMBIGUOUS_PULL_REQUEST");
     const pr = taskPulls[0];
     if (!pr) return makePullRequestFact({ status: "ABSENT", taskId, candidateHead: expected });

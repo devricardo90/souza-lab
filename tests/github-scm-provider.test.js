@@ -92,6 +92,7 @@ test("GitHub SCM provider normalizes repository, branch, PR and merge facts", ()
   });
   assert.equal(provider.getBranchFacts("loop/TASK-001/exec-1").headSha, HEAD);
   assert.equal(provider.getPullRequestFact(TASK, HEAD).status, "OPEN");
+  assert.equal(provider.getPullRequestFact(TASK, HEAD, "different-execution").status, "ABSENT");
   assert.equal(provider.getPullRequestFact(TASK, HEAD_B).status, "UNKNOWN");
   assert.equal(provider.getMergeFact(TASK, HEAD).status, "NOT_STARTED");
   fixture.pr = rawPull({ state: "closed", merged: true });
