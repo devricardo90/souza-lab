@@ -103,6 +103,14 @@ test("GitHub SCM provider normalizes repository, branch, PR and merge facts", ()
   assert.equal(provider.getPullRequestFact(TASK, HEAD).status, "ABSENT");
 });
 
+test("GitHub REST PR-list shape with omitted merged boolean is normalized from state and merged_at", () => {
+  const fixture = new GitHubFixture();
+  fixture.pr = { ...rawPull(), merged: undefined };
+  assert.equal(fixture.provider().getPullRequestFact(TASK, HEAD, "exec-1").status, "OPEN");
+  fixture.pr = { ...rawPull({ state: "closed", merged: true }), merged: undefined };
+  assert.equal(fixture.provider().getPullRequestFact(TASK, HEAD, "exec-1").status, "MERGED");
+});
+
 test("GitHub PR creation rediscovers by branch/head and requires a current lease before mutation", async () => {
   const fixture = new GitHubFixture();
   const provider = fixture.provider();
