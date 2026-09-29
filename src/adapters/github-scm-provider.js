@@ -262,6 +262,7 @@ export class GitHubSCMProvider extends SCMProvider {
   assertMergeable(pr, expectedHead, taskId) {
     if (pr.headSha !== expectedHead) throw new GitHubSCMError("pull request HEAD differs from the authorized candidate", "GITHUB_PR_HEAD_MISMATCH", "INVARIANT_VIOLATION");
     if (pr.state !== "open" || pr.merged) throw new GitHubSCMError("pull request is not open", "GITHUB_PR_NOT_OPEN", "INVARIANT_VIOLATION");
+    if (!this.baseBranch || pr.baseBranch !== this.baseBranch) throw new GitHubSCMError("pull request base differs from the configured target branch", "GITHUB_PR_BASE_MISMATCH", "INVARIANT_VIOLATION");
     if (pr.mergeable !== true) throw new GitHubSCMError("pull request mergeability is not explicitly true", "GITHUB_MERGEABILITY_UNKNOWN", "INVARIANT_VIOLATION");
     if (!pr.body.includes(`<!-- loop-task:${taskId} -->`)) throw new GitHubSCMError("pull request task identity does not match", "GITHUB_TASK_ID_MISMATCH", "INVARIANT_VIOLATION");
   }
