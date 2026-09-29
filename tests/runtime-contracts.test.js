@@ -68,17 +68,19 @@ test("planner output is computed-state driven and deterministically precondition
   assert.equal(first.preconditions.recoveryInputFingerprint, second.preconditions.recoveryInputFingerprint);
 });
 
-test("planner creates one PR only when provider truth says absent and waits on unknown or stale PR facts", () => {
+test("planner creates the PR before post-candidate lifecycle actions and waits on unknown or stale PR facts", () => {
   const planner = new ActionPlanner();
-  const makeTestingObservation = (pullRequest) => makeObservation({
+  const makeObservationFor = (state, pullRequest) => makeObservation({
     executionId: "exec", repository: "owner/sandbox", cycleId: "cycle-1", observedAt: NOW,
-    computed: { state: "TESTING", derivedState: "TESTING", taskId: "TASK-001", candidateHead: "a".repeat(40), blockers: [], nextTaskId: null },
+    computed: { state, derivedState: state, taskId: "TASK-001", candidateHead: "a".repeat(40), blockers: [], nextTaskId: null },
     recovery: { facts: { pullRequest } },
   });
   const absent = { status: "ABSENT", candidateHead: "a".repeat(40) };
   const unknown = { status: "UNKNOWN", candidateHead: "a".repeat(40) };
   const stale = { status: "OPEN", candidateHead: "a".repeat(40), headSha: "b".repeat(40) };
-  assert.equal(planner.plan(makeTestingObservation(absent), { now: NOW }).actionType, "CREATE_PULL_REQUEST");
-  assert.equal(planner.plan(makeTestingObservation(unknown), { now: NOW }).actionType, "WAIT");
-  assert.equal(planner.plan(makeTestingObservation(stale), { now: NOW }).actionType, "WAIT");
+  for (const state of ["TESTING", "VALIDATING", "REVIEWING", "READY_TO_MERGE"]) {
+    assert.equal(planner.plan(makeObservationFor(state, absent), { now: NOW }).actionType, "CREATE_PULL_REQUEST", state);
+  }
+  assert.equal(planner.plan(makeObservationFor("TESTING", unknown), { now: NOW }).actionType, "WAIT");
+  assert.equal(planner.plan(makeObservationFor("READY_TO_MERGE", stale), { now: NOW }).actionType, "WAIT");
 });
