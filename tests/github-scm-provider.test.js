@@ -8,7 +8,7 @@ const MERGE = "c".repeat(40);
 const TASK = "TASK-001";
 const REPOSITORY = "owner/souza-loop-sandbox";
 
-function rawPull({ head = HEAD, state = "open", merged = false, mergeable = true, number = 7 } = {}) {
+function rawPull({ head = HEAD, state = "open", merged = false, mergeable = true, number = 7, base = "main" } = {}) {
   return {
     number,
     state,
@@ -21,7 +21,7 @@ function rawPull({ head = HEAD, state = "open", merged = false, mergeable = true
     body: `controlled sandbox change <!-- loop-task:${TASK} --> <!-- loop-execution:exec-1 -->`,
     user: { login: "coder" },
     head: { sha: head, ref: "loop/TASK-001/exec-1" },
-    base: { ref: "main" },
+    base: { ref: base },
     mergeable,
   };
 }
@@ -159,6 +159,16 @@ test("GitHub merge aborts on stale PR HEAD, unknown mergeability, or unrelated g
 
   fixture.pr = rawPull();
   await assert.rejects(provider.mergePullRequest(mergeAuthorization({ ci: { ...mergeAuthorization().ci, workflowIdentity: "unrelated.yml" } }), context), { code: "GITHUB_MERGE_GATES_FAILED" });
+  assert.equal(fixture.calls.some((args) => args.includes("PUT")), false);
+});
+
+test("GitHub merge rejects a PR retargeted away from the configured base branch", async () => {
+  const fixture = new GitHubFixture();
+  fixture.pr = rawPull({ base: "release" });
+  await assert.rejects(
+    fixture.provider().mergePullRequest(mergeAuthorization(), { assertLeaseCurrent: async () => {} }),
+    { code: "GITHUB_PR_BASE_MISMATCH" },
+  );
   assert.equal(fixture.calls.some((args) => args.includes("PUT")), false);
 });
 
