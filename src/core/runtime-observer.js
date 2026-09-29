@@ -47,6 +47,7 @@ export class RuntimeObserver {
     try {
       recovery = this.recoveryCoordinator.recover({
         ...context,
+        executionId,
         // Task order comes from the task-system adapter. Recovery validates this
         // checkpoint hint against that selection before reusing an active task.
         activeTaskHint: checkpoint?.taskId ?? null,

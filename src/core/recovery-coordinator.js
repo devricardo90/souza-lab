@@ -63,6 +63,7 @@ export class RecoveryCoordinator {
   }
 
   recover({
+    executionId = null,
     activeTaskId = null,
     activeTaskHint = null,
     specRevision = null,
@@ -112,7 +113,7 @@ export class RecoveryCoordinator {
       validation = revision ? validationProvider.getValidationResult(task.id, revision.head) : null;
       review = revision ? reviewProvider.getReviewResult(revision.head) : null;
       pullRequest = revision && typeof scmProvider.getPullRequestFact === "function"
-        ? scmProvider.getPullRequestFact(task.id, revision.head)
+        ? scmProvider.getPullRequestFact(task.id, revision.head, executionId)
         : null;
       merge = revision ? scmProvider.getMergeFact(task.id, revision.head) : null;
       postMergeValidation = merge?.merged
