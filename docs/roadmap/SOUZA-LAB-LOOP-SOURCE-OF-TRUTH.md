@@ -1,8 +1,8 @@
 # Souza Lab Loop — Source of Truth
 
 **Baseline date:** 2026-09-27
-**Status:** Phase 5 execution runtime PASS after Microtest 002, Phase 4 regressions, Microtest 001, and the full suite. See [Phase 5 evidence](../evidence/PHASE-5-EXECUTION-RUNTIME.md).
-**Current phase:** Phase 5 — execution runtime complete; next phase requires a separate Owner directive.
+**Status:** Phase 6 durable execution lease and real GitHub sandbox lifecycle PASS. See [Phase 6 evidence](../evidence/PHASE-6-GITHUB-RUNTIME.md).
+**Current phase:** Phase 6 — complete; the next phase requires a separate Owner directive.
 
 This document is the canonical roadmap and governance record for building a reusable development Loop in Souza Lab. It records the phase order, current evidence, decisions, and boundaries. The owner accepted baseline commit `e20e9f327f6b67bf62ca05b53c4185013f910b0b` and authorized implementation through B7; no additional planning gate is required between stages.
 
@@ -45,6 +45,7 @@ The owner gate for implementation was passed after the accepted baseline commit.
 | B7 | Synthetic Microtest 001 | PASS | `node --test tests/microtest-001.test.js`; all eight acceptance cases passed, including exact-head staleness, recovery, fail-closed evidence, review ordering, and successful completion/next-task selection. |
 | 4 | Failure injection, correction and retest | PASS | All 34 fault IDs executed; corrections are regression-tested; Microtest 001 and full suite pass. F03 confirms that local suffix truncation needs a trusted external checkpoint to detect. Evidence: `docs/evidence/PHASE-4-FAILURE-INJECTION.md`. |
 | 5 | Execution runtime | PASS | Deterministic runtime, action planning, checkpoints, retries/wakeup contract, evidence anchoring, projections, Microtest 002, R01–R08, and P5-01–P5-20 passed. Phase 4 regressions, Microtest 001, and the 92-test full suite pass. Evidence: `docs/evidence/PHASE-5-EXECUTION-RUNTIME.md`. |
+| 6 | Durable execution safety and real GitHub SCM/CI | PASS | Local durable leases/fencing, real GitHub SCM and exact-workflow CI adapters, two-runtime race, two real sandbox PR/CI/merge lifecycles, G01–G18 injections, Microtest 001, Phase 4, Microtest 002, and the 128-test full suite passed. GitHub server-side manual-bypass enforcement is not proven. Evidence: `docs/evidence/PHASE-6-GITHUB-RUNTIME.md`. |
 
 ## Phase 1 evidence snapshot
 
