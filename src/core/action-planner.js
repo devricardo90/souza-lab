@@ -22,13 +22,14 @@ const STATE_ACTION = Object.freeze({
 export class ActionPlanner {
   plan(observation, { attempt = 1, now = new Date().toISOString(), repository = observation.repository, cycleId = observation.cycleId } = {}) {
     const computed = observation.computed;
-    const pullRequestStatus = observation.recovery?.facts?.pullRequest?.status;
+    const pullRequest = observation.recovery?.facts?.pullRequest;
+    const hasCandidateRevision = typeof computed.candidateHead === "string" && computed.candidateHead.length > 0;
     const actionType = observation.projectionDrift || computed.projectionMismatch
       ? "WRITE_PROJECTIONS"
-      : computed.state === "TESTING" && pullRequestStatus === "ABSENT"
+      : hasCandidateRevision && pullRequest?.status === "ABSENT"
         ? "CREATE_PULL_REQUEST"
-        : computed.state === "TESTING" && (pullRequestStatus === "UNKNOWN"
-          || (pullRequestStatus === "OPEN" && observation.recovery?.facts?.pullRequest?.headSha !== computed.candidateHead))
+        : hasCandidateRevision && (pullRequest?.status === "UNKNOWN"
+          || (pullRequest?.status === "OPEN" && pullRequest.headSha !== computed.candidateHead))
           ? "WAIT"
           : STATE_ACTION[computed.state];
     if (!actionType) throw new TypeError(`no action is defined for computed state ${computed.state}`);
