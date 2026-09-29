@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { GitHubSCMError, GitHubSCMProvider } from "../src/adapters/github-scm-provider.js";
 import { GitHubCIError, GitHubCIProvider } from "../src/adapters/github-ci-provider.js";
 import { LocalExecutionLeaseProvider } from "../src/adapters/local-execution-lease-provider.js";
+import { renderAdditionSource } from "../scripts/microtest-003-github.js";
 
 const REPOSITORY = "owner/souza-loop-sandbox";
 const HEAD_A = "a".repeat(40);
@@ -241,4 +242,13 @@ test("PR retargeting or missing mergeability fails closed before mutation", asyn
     await assert.rejects(fixture.provider().mergePullRequest(auth(), leased));
     assert.equal(fixture.putCount, 0);
   }
+});
+
+test("Microtest 003 repeatability gives each execution a distinct but equivalent candidate source", () => {
+  const sourceA = renderAdditionSource("execution-a");
+  const sourceB = renderAdditionSource("execution-b");
+  assert.notEqual(sourceA, sourceB);
+  assert.match(sourceA, /return a \+ b/);
+  assert.match(sourceB, /return a \+ b/);
+  assert.throws(() => renderAdditionSource("bad/execution"), /executionId is invalid/);
 });

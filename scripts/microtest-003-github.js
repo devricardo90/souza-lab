@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 import { GitHubSCMProvider } from "../src/adapters/github-scm-provider.js";
 import { GitHubCIProvider } from "../src/adapters/github-ci-provider.js";
 import { JsonlEvidenceStore } from "../src/adapters/jsonl-evidence-store.js";
@@ -26,6 +27,11 @@ const OWNER = process.env.LOOP_GITHUB_OWNER ?? "devricardo90";
 const REPO = process.env.LOOP_GITHUB_REPO ?? "souza-loop-sandbox";
 const REPOSITORY = `${OWNER}/${REPO}`;
 const CI_IDENTITY = ".github/workflows/validate.yml";
+
+export function renderAdditionSource(executionId) {
+  if (typeof executionId !== "string" || !/^[A-Za-z0-9-]+$/.test(executionId)) throw new TypeError("executionId is invalid for sandbox source generation");
+  return `// Synthetic sandbox candidate for execution ${executionId}.\nexport function add(a, b) {\n  if (!Number.isInteger(a) || !Number.isInteger(b)) throw new TypeError('integer inputs required');\n  return a + b;\n}\n`;
+}
 
 function git(cwd, args, timeout = 20000) {
   try {
@@ -151,7 +157,7 @@ async function main() {
       git(clonePath, ["checkout", "-b", branch]);
       mkdirSync(join(clonePath, "src"), { recursive: true });
       mkdirSync(join(clonePath, "test"), { recursive: true });
-      writeFileSync(join(clonePath, "src", "add.js"), "export function add(a, b) {\n  if (!Number.isInteger(a) || !Number.isInteger(b)) throw new TypeError('integer inputs required');\n  return a + b;\n}\n", "utf8");
+      writeFileSync(join(clonePath, "src", "add.js"), renderAdditionSource(executionId), "utf8");
       writeFileSync(join(clonePath, "test", "add.test.js"), "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { add } from '../src/add.js';\n\ntest('add handles positive, zero, and negative integers', () => {\n  assert.equal(add(2, 3), 5);\n  assert.equal(add(0, 4), 4);\n  assert.equal(add(-2, 1), -1);\n});\n", "utf8");
       git(clonePath, ["add", "src/add.js", "test/add.test.js"]);
       git(clonePath, ["commit", "-m", "feat: implement TASK-001 integer addition"]);
@@ -353,7 +359,9 @@ async function main() {
   process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
 }
 
-main().catch((error) => {
-  process.stderr.write(`${error.name}: ${error.message}\n`);
-  process.exitCode = 1;
-});
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  main().catch((error) => {
+    process.stderr.write(`${error.name}: ${error.message}\n`);
+    process.exitCode = 1;
+  });
+}
