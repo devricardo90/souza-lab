@@ -102,3 +102,5 @@ Microtest 001 ran against a temporary local Git repository and Markdown roadmap,
 ## Change control
 
 Update this document when the owner changes phase order, accepts a gate, resolves an open decision, or corrects a factual claim. Record evidence for completed phase gates. Do not mark a phase complete based only on an agent's summary. The owner gate for B0–B7 is passed. Phases 4, 5, and 6 are complete. Phase 7 is BLOCKED on real Jira access; do not mark it PASS until a real Jira project is reachable and Microtest 004 has actually run against it. Do not begin Phase 8 until a separate Owner directive authorizes it.
+
+Owner decisions are recorded under `docs/decisions/`. See [`docs/decisions/OWNER-DECISION-JIRA-CONTROL-PLANE.md`](../decisions/OWNER-DECISION-JIRA-CONTROL-PLANE.md) for the Owner's decision approving Jira as a persistent operational task-system integration; that decision does not itself change Phase 7's BLOCKED status.
