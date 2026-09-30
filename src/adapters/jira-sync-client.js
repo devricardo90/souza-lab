@@ -58,7 +58,7 @@ function decodeJson(raw, where) {
   catch { throw new JiraSyncError(`${where} returned malformed JSON`, "JIRA_INVALID_JSON", "EXTERNAL_BLOCK"); }
 }
 
-function marker(executionId, kind) {
+export function executionMarker(executionId, kind) {
   return `<!-- loop-execution:${executionId}:${kind} -->`;
 }
 
@@ -95,6 +95,11 @@ export class JiraSyncClient {
     return decodeJson(raw, `Jira ${method} ${path}`);
   }
 
+  /** Read-only: current Jira workflow status name (used for reconciliation). */
+  getIssueStatusName(issueKey) {
+    return this.request(`issue/${encodeURIComponent(issueKey)}?fields=status`)?.fields?.status?.name ?? null;
+  }
+
   listComments(issueKey) {
     const response = this.request(`issue/${encodeURIComponent(issueKey)}/comment?maxResults=200`);
     if (!response || !Array.isArray(response.comments)) {
@@ -112,7 +117,7 @@ export class JiraSyncClient {
   async addExecutionComment(issueKey, { executionId, kind, body }, context) {
     if (typeof context?.assertLeaseCurrent !== "function") throw new JiraSyncError("active execution lease is required to write to Jira", "LEASE_REQUIRED", "INVARIANT_VIOLATION");
     await context.assertLeaseCurrent();
-    const tag = marker(executionId, kind);
+    const tag = executionMarker(executionId, kind);
     const existing = this.findMarkedComment(issueKey, tag);
     if (existing) return { created: false, id: existing.id };
     await context.assertLeaseCurrent();

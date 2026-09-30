@@ -30,6 +30,7 @@ const server = http.createServer((req, res) => {
       const body = JSON.parse(raw || "{}");
       if (body.reset) reset();
       if (body.postNoop !== undefined) state.postNoop = body.postNoop;
+      if (body.setStatus !== undefined) state.status = body.setStatus;
       if (body.override) state.overrides.push({ times: 1, ...body.override });
       return json(res, 200, { ok: true });
     }
