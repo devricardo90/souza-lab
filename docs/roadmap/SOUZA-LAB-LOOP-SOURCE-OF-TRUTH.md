@@ -1,8 +1,8 @@
 # Souza Lab Loop — Source of Truth
 
 **Baseline date:** 2026-09-27
-**Status:** Phase 6 durable execution lease and real GitHub sandbox lifecycle PASS. See [Phase 6 evidence](../evidence/PHASE-6-GITHUB-RUNTIME.md).
-**Current phase:** Phase 6 — complete; the next phase requires a separate Owner directive.
+**Status:** Phase 6 durable execution lease and real GitHub sandbox lifecycle PASS. Phase 7 (real Jira TaskSystem adapter) is BLOCKED on real Jira access; the adapter, canonical mapping, and J01–J20 failure matrix are implemented and pass deterministically, and a real LoopRuntime was proven to reach DONE with a Jira-sourced task and select the next Jira-dependent task, but no real Jira read/write or Microtest 004 was executed because no Jira site/credentials exist in this environment. See [Phase 6 evidence](../evidence/PHASE-6-GITHUB-RUNTIME.md) and [Phase 7 evidence](../evidence/PHASE-7-JIRA-TASKSYSTEM.md).
+**Current phase:** Phase 7 — BLOCKED on real Jira credentials; do not claim PASS until a real Jira project is reachable and Microtest 004 runs against it.
 
 This document is the canonical roadmap and governance record for building a reusable development Loop in Souza Lab. It records the phase order, current evidence, decisions, and boundaries. The owner accepted baseline commit `e20e9f327f6b67bf62ca05b53c4185013f910b0b` and authorized implementation through B7; no additional planning gate is required between stages.
 
@@ -46,6 +46,7 @@ The owner gate for implementation was passed after the accepted baseline commit.
 | 4 | Failure injection, correction and retest | PASS | All 34 fault IDs executed; corrections are regression-tested; Microtest 001 and full suite pass. F03 confirms that local suffix truncation needs a trusted external checkpoint to detect. Evidence: `docs/evidence/PHASE-4-FAILURE-INJECTION.md`. |
 | 5 | Execution runtime | PASS | Deterministic runtime, action planning, checkpoints, retries/wakeup contract, evidence anchoring, projections, Microtest 002, R01–R08, and P5-01–P5-20 passed. Phase 4 regressions, Microtest 001, and the 92-test full suite pass. Evidence: `docs/evidence/PHASE-5-EXECUTION-RUNTIME.md`. |
 | 6 | Durable execution safety and real GitHub SCM/CI | PASS | Local durable leases/fencing, real GitHub SCM and exact-workflow CI adapters, two-runtime race, two real sandbox PR/CI/merge lifecycles, G01–G18 injections, Microtest 001, Phase 4, Microtest 002, and the 128-test full suite passed. GitHub server-side manual-bypass enforcement is not proven. Evidence: `docs/evidence/PHASE-6-GITHUB-RUNTIME.md`. |
+| 7 | Real Jira TaskSystem adapter | BLOCKED (real Jira access) | `JiraTaskSystemAdapter`/`JiraSyncClient` implemented behind the unchanged `TaskSystemAdapter` contract; canonical status/AC/dependency mapping, J01–J20, and a real-`LoopRuntime` synthetic substitution proof (Jira task → DONE → next Jira-dependent task eligible) all pass; the 152-test full suite passes with zero existing files modified. No Jira site/credentials/connector exist in this environment, so the real Jira read/write path and Microtest 004 against a live project were not executed and PASS is not claimed for them. Evidence: `docs/evidence/PHASE-7-JIRA-TASKSYSTEM.md`. |
 
 ## Phase 1 evidence snapshot
 
@@ -100,4 +101,4 @@ Microtest 001 ran against a temporary local Git repository and Markdown roadmap,
 
 ## Change control
 
-Update this document when the owner changes phase order, accepts a gate, resolves an open decision, or corrects a factual claim. Record evidence for completed phase gates. Do not mark a phase complete based only on an agent's summary. The owner gate for B0–B7 is passed. Phases 4 and 5 are complete. Do not begin Phase 6 until a separate Owner directive authorizes it.
+Update this document when the owner changes phase order, accepts a gate, resolves an open decision, or corrects a factual claim. Record evidence for completed phase gates. Do not mark a phase complete based only on an agent's summary. The owner gate for B0–B7 is passed. Phases 4, 5, and 6 are complete. Phase 7 is BLOCKED on real Jira access; do not mark it PASS until a real Jira project is reachable and Microtest 004 has actually run against it. Do not begin Phase 8 until a separate Owner directive authorizes it.
