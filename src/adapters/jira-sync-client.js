@@ -1,7 +1,4 @@
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { annotateError, classifyJiraFacts, isFacts, jiraCurlTransport, redact } from "./jira-transport.js";
 
 /**
  * Jira write-path capabilities: execution-started / PR / merge comments and
@@ -22,12 +19,6 @@ import { join } from "node:path";
  * the write-up of this decision).
  */
 
-function redact(value) {
-  return String(value ?? "")
-    .replace(/(authorization\s*:\s*(?:basic|bearer)\s+)\S+/ig, "$1[REDACTED]")
-    .replace(/\b[A-Za-z0-9+/]{24,}={0,2}\b/g, "[REDACTED]");
-}
-
 export class JiraSyncError extends Error {
   constructor(message, code = "JIRA_SYNC_ERROR", classification = "EXTERNAL_BLOCK") {
     super(message);
@@ -38,37 +29,12 @@ export class JiraSyncError extends Error {
   }
 }
 
-export function defaultJiraWriteTransport({ site, email, apiToken, path, method = "GET", body = null, timeoutMs = 15000 }) {
-  const url = `https://${site}/rest/api/3/${path}`;
-  const basic = Buffer.from(`${email}:${apiToken}`, "utf8").toString("base64");
-  const configDir = mkdtempSync(join(tmpdir(), "loop-jira-curl-write-"));
-  const configPath = join(configDir, "curl.cfg");
-  const bodyPath = join(configDir, "body.json");
-  try {
-    const lines = [
-      `header = "Authorization: Basic ${basic}"`,
-      `header = "Accept: application/json"`,
-      `header = "Content-Type: application/json"`,
-      `request = "${method}"`,
-      "silent", "show-error", "fail",
-    ];
-    if (body !== null) {
-      writeFileSync(bodyPath, JSON.stringify(body), { mode: 0o600 });
-      lines.push(`data = "@${bodyPath.replace(/\\/g, "\\\\")}"`);
-    }
-    writeFileSync(configPath, `${lines.join("\n")}\n`, { mode: 0o600 });
-    const raw = execFileSync("curl", ["-K", configPath, "--max-time", String(Math.ceil(timeoutMs / 1000)), url], {
-      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true, timeout: timeoutMs, killSignal: "SIGTERM",
-    }).trim();
-    return raw === "" ? null : raw;
-  } finally {
-    try { rmSync(configDir, { recursive: true, force: true }); } catch {}
-  }
-}
+export const defaultJiraWriteTransport = jiraCurlTransport;
 
 function call(transport, request) {
+  let result;
   try {
-    return transport(request);
+    result = transport(request);
   } catch (error) {
     if (error instanceof JiraSyncError) throw error;
     const status = Number(error?.status ?? error?.httpStatus ?? NaN);
@@ -80,6 +46,10 @@ function call(transport, request) {
       timedOut ? "TRANSIENT" : "EXTERNAL_BLOCK",
     );
   }
+  if (!isFacts(result)) return result;
+  const spec = classifyJiraFacts(result, { allowEmpty: true });
+  if (!spec.ok) throw annotateError(new JiraSyncError(`Jira write request failed: ${redact(spec.message)}`, spec.code, spec.classification), spec);
+  return result.body === "" ? null : result.body;
 }
 
 function decodeJson(raw, where) {
@@ -93,19 +63,35 @@ function marker(executionId, kind) {
 }
 
 export class JiraSyncClient {
-  constructor({ site, email, apiToken, timeoutMs = 15000, transport = defaultJiraWriteTransport } = {}) {
+  // True private field: credentials never appear in JSON.stringify, Object.keys,
+  // util.inspect, structuredClone, or logs of this client.
+  #credentials;
+
+  constructor({ site, email, apiToken, timeoutMs = 15000, transport = defaultJiraWriteTransport, scheme = "https" } = {}) {
     if (typeof site !== "string" || site.trim() === "") throw new TypeError("Jira site is required");
     this.site = site;
-    this.email = email;
-    this.apiToken = apiToken;
+    this.scheme = scheme;
+    this.#credentials = Object.freeze({ email, apiToken });
     this.timeoutMs = timeoutMs;
     this.transport = transport;
   }
 
   request(path, { method = "GET", body = null } = {}) {
-    const raw = call(this.transport, {
-      site: this.site, email: this.email, apiToken: this.apiToken, timeoutMs: this.timeoutMs, path, method, body,
-    });
+    let raw;
+    try {
+      raw = call(this.transport, {
+        site: this.site, scheme: this.scheme, email: this.#credentials.email, apiToken: this.#credentials.apiToken,
+        timeoutMs: this.timeoutMs, path, method, body,
+      });
+    } catch (error) {
+      if (error instanceof JiraSyncError && method !== "GET") {
+        // A definite Jira rejection (4xx incl. 429) means the write was not applied;
+        // a transport failure or 5xx leaves the outcome unknown.
+        const definite = error.httpStatus >= 400 && error.httpStatus < 500 && !error.transportFailed;
+        error.writeOutcome = definite ? "NOT_APPLIED" : "UNKNOWN";
+      }
+      throw error;
+    }
     return decodeJson(raw, `Jira ${method} ${path}`);
   }
 
@@ -156,21 +142,34 @@ export class JiraSyncClient {
    * DONE. It refuses otherwise rather than trusting a caller-supplied claim
    * uncritically about anything other than that one precondition.
    */
-  async markTaskComplete(issueKey, { executionId, computedState, doneStatusName, transitionName }, context) {
+  async markTaskComplete(issueKey, { executionId, computedState, doneStatusName, transitionName, expectedCurrentStatusNames = null }, context) {
     if (computedState !== "DONE") {
       throw new JiraSyncError("Jira completion may only be requested after computed Loop state is DONE", "JIRA_PREMATURE_COMPLETION", "INVARIANT_VIOLATION");
     }
     if (typeof context?.assertLeaseCurrent !== "function") throw new JiraSyncError("active execution lease is required to write to Jira", "LEASE_REQUIRED", "INVARIANT_VIOLATION");
+    const statusPath = `issue/${encodeURIComponent(issueKey)}?fields=status`;
     await context.assertLeaseCurrent();
-    const issue = this.request(`issue/${encodeURIComponent(issueKey)}?fields=status`);
-    if (issue?.fields?.status?.name === doneStatusName) return { transitioned: false, alreadyDone: true };
+    const before = this.request(statusPath)?.fields?.status?.name;
+    if (before === doneStatusName) return { status: "CONFIRMED", transitioned: false, alreadyDone: true };
+    if (Array.isArray(expectedCurrentStatusNames) && !expectedCurrentStatusNames.includes(before)) {
+      throw new JiraSyncError(`${issueKey}: current Jira status "${before}" is not one of the expected states`, "STALE_STATE", "EXTERNAL_BLOCK");
+    }
     await context.assertLeaseCurrent();
     const transitions = this.request(`issue/${encodeURIComponent(issueKey)}/transitions`);
     const match = Array.isArray(transitions?.transitions) ? transitions.transitions.find((t) => t.name === transitionName) : null;
     if (!match) throw new JiraSyncError(`${issueKey}: configured completion transition "${transitionName}" is not available`, "JIRA_TRANSITION_NOT_FOUND", "EXTERNAL_BLOCK");
     await context.assertLeaseCurrent();
     this.request(`issue/${encodeURIComponent(issueKey)}/transitions`, { method: "POST", body: { transition: { id: match.id } } });
-    return { transitioned: true, alreadyDone: false };
+    // A 2xx write is not proof. Read the issue again and require the exact desired state.
+    const uncertain = (reason, observedStatus, cause = null) => ({
+      status: "UNCERTAIN", transitioned: false, alreadyDone: false, reason, observedStatus, issueKey, executionId,
+      ...(cause ? { cause } : {}),
+    });
+    let after;
+    try { after = this.request(statusPath)?.fields?.status?.name ?? null; }
+    catch (error) { return uncertain("POST_WRITE_READ_FAILED", null, error?.code ?? "UNKNOWN"); }
+    if (after === doneStatusName) return { status: "CONFIRMED", transitioned: true, alreadyDone: false };
+    return uncertain("POST_WRITE_STATE_MISMATCH", after);
   }
 }
 

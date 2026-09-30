@@ -1,9 +1,6 @@
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { TaskSystemAdapter, makeTask } from "../core/contracts.js";
 import { resolveNextTask } from "./markdown-task-adapter.js";
+import { annotateError, classifyJiraFacts, isFacts, jiraCurlTransport, redact } from "./jira-transport.js";
 
 /**
  * Read-only Jira task source. Maps Jira issues into the same canonical
@@ -39,41 +36,12 @@ export class JiraAdapterError extends Error {
   }
 }
 
-function redact(value) {
-  return String(value ?? "")
-    .replace(/(authorization\s*:\s*(?:basic|bearer)\s+)\S+/ig, "$1[REDACTED]")
-    .replace(/\b[A-Za-z0-9+/]{24,}={0,2}\b/g, "[REDACTED]");
-}
-
-/**
- * Synchronous transport so the adapter satisfies the existing synchronous
- * TaskSystemAdapter contract (RecoveryCoordinator/RuntimeObserver never
- * await taskSystem.listTasks()). Credentials are written to a mode-0600
- * curl config file and never placed in argv/env of a child process error,
- * mirroring why the GitHub adapters never leak a token: `gh` never receives
- * one as an argument either.
- */
-export function defaultJiraTransport({ site, email, apiToken, path, query = "", timeoutMs = 15000 }) {
-  if (typeof site !== "string" || site.trim() === "") throw new TypeError("Jira site is required");
-  if (typeof email !== "string" || email.trim() === "") throw new TypeError("Jira email is required");
-  if (typeof apiToken !== "string" || apiToken.trim() === "") throw new TypeError("Jira API token is required");
-  const url = `https://${site}/rest/api/3/${path}${query ? `?${query}` : ""}`;
-  const basic = Buffer.from(`${email}:${apiToken}`, "utf8").toString("base64");
-  const configDir = mkdtempSync(join(tmpdir(), "loop-jira-curl-"));
-  const configPath = join(configDir, "curl.cfg");
-  try {
-    writeFileSync(configPath, `header = "Authorization: Basic ${basic}"\nheader = "Accept: application/json"\nsilent\nshow-error\nfail\n`, { mode: 0o600 });
-    return execFileSync("curl", ["-K", configPath, "--max-time", String(Math.ceil(timeoutMs / 1000)), url], {
-      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true, timeout: timeoutMs, killSignal: "SIGTERM",
-    }).trim();
-  } finally {
-    try { rmSync(configDir, { recursive: true, force: true }); } catch {}
-  }
-}
+export const defaultJiraTransport = jiraCurlTransport;
 
 function call(transport, request) {
+  let result;
   try {
-    return transport(request);
+    result = transport(request);
   } catch (error) {
     if (error instanceof JiraAdapterError) throw error;
     const status = Number(error?.status ?? error?.httpStatus ?? NaN);
@@ -87,6 +55,10 @@ function call(transport, request) {
       timedOut ? "TRANSIENT" : "EXTERNAL_BLOCK",
     );
   }
+  if (!isFacts(result)) return result;
+  const spec = classifyJiraFacts(result);
+  if (!spec.ok) throw annotateError(new JiraAdapterError(`Jira request failed: ${redact(spec.message)}`, spec.code, spec.classification), spec);
+  return result.body;
 }
 
 function decodeJson(raw, where) {
@@ -242,10 +214,14 @@ export function mapIssueToTask(issue, config) {
 }
 
 export class JiraTaskSystemAdapter extends TaskSystemAdapter {
+  // Credentials live in a true private field: absent from JSON.stringify,
+  // Object.keys/getOwnPropertyNames, util.inspect, structuredClone and logs.
+  #credentials;
+
   constructor({
     site, email, apiToken, projectKey, statusMapping,
     dependencyLinkType = "Blocks", acSource = "description", acFieldId = null,
-    timeoutMs = 15000, transport = defaultJiraTransport,
+    timeoutMs = 15000, transport = defaultJiraTransport, scheme = "https",
   } = {}) {
     super();
     if (typeof site !== "string" || site.trim() === "") throw new TypeError("Jira site is required");
@@ -253,8 +229,8 @@ export class JiraTaskSystemAdapter extends TaskSystemAdapter {
     if (!statusMapping || typeof statusMapping !== "object") throw new TypeError("Jira statusMapping is required");
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new TypeError("timeoutMs must be positive");
     this.site = site;
-    this.email = email;
-    this.apiToken = apiToken;
+    this.scheme = scheme;
+    this.#credentials = Object.freeze({ email, apiToken });
     this.projectKey = projectKey;
     this.statusMapping = Object.freeze({ ...statusMapping });
     this.dependencyLinkType = dependencyLinkType;
@@ -274,7 +250,7 @@ export class JiraTaskSystemAdapter extends TaskSystemAdapter {
       fields,
     }).toString();
     const raw = call(this.transport, {
-      site: this.site, email: this.email, apiToken: this.apiToken, timeoutMs: this.timeoutMs,
+      site: this.site, scheme: this.scheme, email: this.#credentials.email, apiToken: this.#credentials.apiToken, timeoutMs: this.timeoutMs,
       path: "search", query,
     });
     return object(decodeJson(raw, "Jira issue search"), "Jira search response");
