@@ -37,9 +37,9 @@ beforeEach(async () => {
 });
 after(() => { for (const store of opened.splice(0)) { try { store.close(); } catch {} } if (dir) rmSync(dir, { recursive: true, force: true }); });
 
-const control = (payload) => fetch(`http://127.0.0.1:${port}/__control`, { method: "POST", body: JSON.stringify(payload) }).then((r) => r.json());
+const control = (payload) => fetch(`http://127.0.0.1:${port}/__control`, { method: "POST", body: JSON.stringify(payload), headers: { connection: "close" } }).then((r) => r.json());
 const override = (o) => control({ override: o });
-const requestLog = () => fetch(`http://127.0.0.1:${port}/__log`).then((r) => r.json());
+const requestLog = () => fetch(`http://127.0.0.1:${port}/__log`, { headers: { connection: "close" } }).then((r) => r.json());
 const posts = async (pathPart) => (await requestLog()).filter((e) => e.method === "POST" && e.path.includes(pathPart)).length;
 
 const openStore = (clock) => { const s = new SqliteOutboxStore({ path: dbPath, ...(clock ? { clock } : {}) }); opened.push(s); return s; };
@@ -129,7 +129,7 @@ test("CRASH TEST B (critical): IN_FLIGHT, remote applied, process killed before 
   assert.equal(op.status, "CONFIRMED");
   assert.match(op.lastErrorDetail, /already present/);
   assert.equal(await posts("/comment"), 1, "reconciliation found the remote mutation; no duplicate write");
-  assert.equal((await (await fetch(`http://127.0.0.1:${port}/__log`)).json()).filter((e) => e.method === "GET" && e.path.includes("/comment")).length >= 2, true, "remote state was read before deciding");
+  assert.equal((await (await fetch(`http://127.0.0.1:${port}/__log`, { headers: { connection: "close" } })).json()).filter((e) => e.method === "GET" && e.path.includes("/comment")).length >= 2, true, "remote state was read before deciding");
 });
 
 test("CRASH TEST B2: the same crash for a Jira transition reconciles by status, no second transition", async () => {

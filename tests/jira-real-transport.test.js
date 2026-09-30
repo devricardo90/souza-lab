@@ -32,8 +32,9 @@ before(async () => {
 after(() => server.kill());
 beforeEach(() => control({ reset: true }));
 
-const control = (payload) => fetch(`http://127.0.0.1:${port}/__control`, { method: "POST", body: JSON.stringify(payload) }).then((r) => r.json());
-const requestLog = () => fetch(`http://127.0.0.1:${port}/__log`).then((r) => r.json());
+// Control-plane calls never reuse a pooled keep-alive socket: the mock deliberately kills sockets and runs idle between tests.
+const control = (payload) => fetch(`http://127.0.0.1:${port}/__control`, { method: "POST", body: JSON.stringify(payload), headers: { connection: "close" } }).then((r) => r.json());
+const requestLog = () => fetch(`http://127.0.0.1:${port}/__log`, { headers: { connection: "close" } }).then((r) => r.json());
 const override = (o) => control({ override: o });
 const site = () => `127.0.0.1:${port}`;
 const syncClient = (extra = {}) => new JiraSyncClient({ site: site(), scheme: "http", email: EMAIL, apiToken: TOKEN, timeoutMs: 1500, ...extra });
@@ -120,7 +121,7 @@ test("real curl: connection refused is a TRANSPORT failure (no HTTP status) and 
 test("real curl: connection reset mid-request is a transient transport failure", async () => {
   await override({ fault: "reset" });
   const facts = raw("issue/LOOP-1?fields=status");
-  assert.equal(facts.transportError?.code, "TRANSIENT_NETWORK_FAILURE");
+  assert.equal(facts.transportError?.code, "TRANSIENT_NETWORK_FAILURE", JSON.stringify(facts)); // facts in the message make any rare failure self-diagnosing
   assert.equal(facts.httpStatus, 0);
 });
 
