@@ -87,8 +87,8 @@ test("idempotent enqueue: the same logical operation twice is one row and one Ji
 
 test("reserved Jira capabilities have identities but no implementation (fail closed)", async () => {
   const exec = executor();
-  const operationId = "JIRA_CREATE:reserved";
-  exec.store.enqueue({ operationId, action: "JIRA_CREATE", targetObject: "LOOP", taskId: "LOOP-1", desiredState: { summary: "x" } });
+  const operationId = "JIRA_UPDATE:reserved";
+  exec.store.enqueue({ operationId, action: "JIRA_UPDATE", targetObject: "LOOP", taskId: "LOOP-1", desiredState: { summary: "x" } });
   const result = await exec.process(operationId);
   assert.equal(result.outcome, "FAILED_PERMANENT");
   assert.equal(result.operation.lastErrorCode, "ACTION_NOT_IMPLEMENTED");

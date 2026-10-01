@@ -34,7 +34,8 @@ if (cfg.command === "uncommitted-tx") {
   });
   if (cfg.startAt) while (Date.now() < cfg.startAt) { /* barrier: release all workers together */ }
   let out;
-  if (cfg.command === "enqueue") out = executor[cfg.op.type === "comment" ? "enqueueComment" : "enqueueTransition"](cfg.op.input);
+  if (cfg.command === "enqueue-spec") { const r = executor.enqueueMaterialization(cfg.spec); out = { created: r.created, conflict: r.conflict === true }; }
+  else if (cfg.command === "enqueue") out = executor[cfg.op.type === "comment" ? "enqueueComment" : "enqueueTransition"](cfg.op.input);
   else if (cfg.command === "process") { const r = await executor.process(cfg.operationId); out = { owned: r.owned, outcome: r.outcome, status: r.operation?.status }; }
   else if (cfg.command === "recover") out = (await executor.recover()).map((r) => ({ owned: r.owned, outcome: r.outcome, recovered: r.recovered }));
   console.log(JSON.stringify(out));

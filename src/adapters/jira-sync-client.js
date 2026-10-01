@@ -100,6 +100,40 @@ export class JiraSyncClient {
     return this.request(`issue/${encodeURIComponent(issueKey)}?fields=status`)?.fields?.status?.name ?? null;
   }
 
+  /**
+   * Read-only full scan of a project's issues in the raw shape the pure observation layer consumes.
+   * Deliberately a deterministic scan, not a text search: Jira search indexes can lag writes.
+   */
+  observeProject(projectKey, { pageSize = 100, maxIssues = 2000 } = {}) {
+    if (typeof projectKey !== "string" || !/^[A-Z][A-Z0-9]*$/.test(projectKey)) throw new JiraSyncError("a valid Jira project key is required", "CONFIG_INVALID", "INVARIANT_VIOLATION");
+    const fields = "summary,status,description,issuelinks,parent,issuetype";
+    const issues = [];
+    let startAt = 0;
+    for (;;) {
+      const query = new URLSearchParams({ jql: `project = "${projectKey}" ORDER BY key ASC`, startAt: String(startAt), maxResults: String(pageSize), fields }).toString();
+      const page = this.request(`search?${query}`);
+      if (!page || !Array.isArray(page.issues)) throw new JiraSyncError("Jira search response is missing an issues array", "INVALID_RESPONSE", "EXTERNAL_BLOCK");
+      issues.push(...page.issues);
+      if (issues.length > maxIssues) throw new JiraSyncError("Jira project exceeds the supported scan limit", "INVALID_RESPONSE", "EXTERNAL_BLOCK");
+      startAt += page.issues.length;
+      if (page.issues.length === 0 || startAt >= Number(page.total ?? issues.length)) break;
+    }
+    return issues;
+  }
+
+  /** Raw create. NOT idempotent by itself: callers (the outbox) reconcile before and verify after. */
+  createIssue({ projectKey, issueTypeName, summary, description }, context) {
+    if (typeof context?.assertLeaseCurrent !== "function") throw new JiraSyncError("active execution lease is required to write to Jira", "LEASE_REQUIRED", "INVARIANT_VIOLATION");
+    return Promise.resolve(context.assertLeaseCurrent()).then(() => {
+      const created = this.request("issue", {
+        method: "POST",
+        body: { fields: { project: { key: projectKey }, issuetype: { name: issueTypeName }, summary, description } },
+      });
+      if (!created?.key) throw new JiraSyncError("Jira did not confirm the issue creation", "JIRA_WRITE_UNCONFIRMED", "TRANSIENT");
+      return { id: created.id ?? null, key: created.key };
+    });
+  }
+
   listComments(issueKey) {
     const response = this.request(`issue/${encodeURIComponent(issueKey)}/comment?maxResults=200`);
     if (!response || !Array.isArray(response.comments)) {

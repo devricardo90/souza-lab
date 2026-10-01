@@ -9,10 +9,20 @@ import http from "node:http";
  * response for the next request matching {method, pathIncludes};
  * POST /__reset; GET /__log.
  */
-const state = { status: "In Progress", comments: [], nextCommentId: 10001, overrides: [], log: [], postNoop: false };
+const state = { status: "In Progress", comments: [], nextCommentId: 10001, overrides: [], log: [], postNoop: false, issues: [], nextIssueNumber: 100, legacySearch: true, createTweak: null };
 
 function reset() {
-  Object.assign(state, { status: "In Progress", comments: [], nextCommentId: 10001, overrides: [], log: [], postNoop: false });
+  Object.assign(state, { status: "In Progress", comments: [], nextCommentId: 10001, overrides: [], log: [], postNoop: false, issues: [], nextIssueNumber: 100, legacySearch: true, createTweak: null });
+}
+
+/** Applies a create-issue write (used by the normal route and by the "applied, then response lost" fault). */
+function createIssue(raw) {
+  const body = JSON.parse(raw);
+  const key = `${body.fields.project.key}-${state.nextIssueNumber++}`;
+  const fields = { summary: body.fields.summary, description: body.fields.description, issuetype: body.fields.issuetype, status: { name: "To Do" }, issuelinks: [], ...(state.createTweak ?? {}) };
+  const created = { id: String(state.nextIssueNumber * 7), key, fields };
+  state.issues.push(created);
+  return created;
 }
 
 function json(res, status, payload, headers = {}) {
@@ -31,6 +41,9 @@ const server = http.createServer((req, res) => {
       if (body.reset) reset();
       if (body.postNoop !== undefined) state.postNoop = body.postNoop;
       if (body.setStatus !== undefined) state.status = body.setStatus;
+      if (body.legacySearch !== undefined) state.legacySearch = body.legacySearch;
+      if (body.createTweak !== undefined) state.createTweak = body.createTweak; // make created issues deviate from what was requested
+      if (body.seedIssue) { state.issues.push(body.seedIssue); }
       if (body.override) state.overrides.push({ times: 1, ...body.override });
       return json(res, 200, { ok: true });
     }
@@ -43,7 +56,8 @@ const server = http.createServer((req, res) => {
       if (--o.times <= 0) state.overrides.splice(idx, 1);
       if (o.fault === "reset") return req.socket.destroy();
       if (o.fault === "applyThenReset") { // write lands, response is lost
-        state.comments.push({ id: String(state.nextCommentId++), body: JSON.parse(raw).body });
+        if (req.url.includes("/comment")) state.comments.push({ id: String(state.nextCommentId++), body: JSON.parse(raw).body });
+        else createIssue(raw);
         return req.socket.destroy();
       }
       if (o.fault === "hang") return; // never answers; client timeout must fire
@@ -60,6 +74,7 @@ const server = http.createServer((req, res) => {
     const comment = /^\/rest\/api\/3\/issue\/([A-Z]+-\d+)\/comment$/.exec(p);
     const transitions = /^\/rest\/api\/3\/issue\/([A-Z]+-\d+)\/transitions$/.exec(p);
     const issue = /^\/rest\/api\/3\/issue\/([A-Z]+-\d+)$/.exec(p);
+    if (p === "/rest/api/3/issue" && req.method === "POST") return json(res, 201, (({ id, key }) => ({ id, key }))(createIssue(raw)));
     if (comment && req.method === "GET") return json(res, 200, { comments: state.comments });
     if (comment && req.method === "POST") {
       const created = { id: String(state.nextCommentId++), body: JSON.parse(raw).body };
@@ -75,7 +90,11 @@ const server = http.createServer((req, res) => {
     if (issue && req.method === "GET") return json(res, 200, { key: issue[1], fields: { status: { name: state.status } } });
     if (p === "/rest/api/3/search") {
       const description = "Acceptance Criteria\n\n- AC-001: mock condition\n";
-      return json(res, 200, { total: 1, startAt: 0, maxResults: 100, issues: [{ key: "LOOP-1", fields: { summary: "Mock", status: { name: state.status }, description, issuelinks: [] } }] });
+      const legacy = state.legacySearch ? [{ key: "LOOP-1", fields: { summary: "Mock", status: { name: state.status }, description, issuelinks: [] } }] : [];
+      const all = [...legacy, ...state.issues];
+      const startAt = Number(url.searchParams.get("startAt") ?? 0);
+      const maxResults = Number(url.searchParams.get("maxResults") ?? 100);
+      return json(res, 200, { total: all.length, startAt, maxResults, issues: all.slice(startAt, startAt + maxResults) });
     }
     return json(res, 404, { errorMessages: ["not found"] });
   });

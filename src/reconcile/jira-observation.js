@@ -1,4 +1,5 @@
 import { cleanText, planOwnedFingerprint } from "./fingerprint.js";
+import { decodeLoopDescription, epicIdFromAdf } from "./jira-adf.js";
 
 /**
  * Pure, read-only normalization of raw Jira issues into a model suitable for deterministic
@@ -12,10 +13,13 @@ import { cleanText, planOwnedFingerprint } from "./fingerprint.js";
  * cannot be translated are kept as explicit, typed `unresolved` entries instead of being dropped.
  *
  * Raw issue shape consumed (subset of the Jira REST shape):
- *   { key, fields: { summary, status:{name}, description (plain text), issuetype?:{name},
+ *   { key, fields: { summary, status:{name}, description, issuetype?:{name},
  *                    parent?:{key}, issuelinks?:[{type:{name}, inwardIssue?:{key}}] } }
- * Description is plain text: flattening Atlassian Document Format belongs to the real Jira
- * adapter and is not proven here.
+ * `description` is either
+ *   - an Atlassian Document Format object (Jira Cloud): ONLY the Loop-owned layout written by
+ *     encodeLoopDescription is decoded (see jira-adf.js); anything else claimed by Loop fails closed
+ *     as a remote-invalid acceptance-criteria problem, anything unclaimed is an unmarked foreign issue; or
+ *   - a plain string (tests / non-Cloud providers): the LOOP_TASK_ID line + "Acceptance Criteria" block.
  */
 
 const TASK_ID = /^[A-Z][A-Z0-9]*-\d+$/;
@@ -82,12 +86,18 @@ export function normalizeJiraObservation(rawIssues, { dependencyLinkType = "Bloc
   // Pass 1: identity markers for every issue, so links can be translated key -> stable id.
   const taskMarkerByKey = new Map();
   const epicIdByKey = new Map();
+  const decodedByKey = new Map();
   for (const raw of rawIssues) {
+    const description = raw.fields?.description;
     if (isEpic(raw)) {
-      const { id } = markers(raw.fields?.description, "LOOP_EPIC_ID", EPIC_ID);
+      const id = typeof description === "string" ? markers(description, "LOOP_EPIC_ID", EPIC_ID).id : epicIdFromAdf(description);
       if (id) epicIdByKey.set(raw.key, id);
+    } else if (description !== null && typeof description === "object") {
+      const decoded = decodeLoopDescription(description);
+      decodedByKey.set(raw.key, decoded);
+      taskMarkerByKey.set(raw.key, { id: decoded.taskId, problem: decoded.markerProblem });
     } else {
-      taskMarkerByKey.set(raw.key, markers(raw.fields?.description, "LOOP_TASK_ID", TASK_ID));
+      taskMarkerByKey.set(raw.key, markers(description, "LOOP_TASK_ID", TASK_ID));
     }
   }
 
@@ -123,7 +133,10 @@ export function normalizeJiraObservation(rawIssues, { dependencyLinkType = "Bloc
     }
     unresolved.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 
-    const ac = parseAc(fields.description);
+    const decoded = decodedByKey.get(raw.key);
+    const ac = decoded === undefined ? parseAc(fields.description)
+      : decoded.claimed ? { criteria: decoded.criteria, problem: decoded.problem }
+        : { criteria: null, problem: "AC_MISSING" };
     if (ac.problem) problems.push(`ac:${ac.problem}`);
     const title = cleanText(fields.summary);
     const sortedDeps = [...dependsOn].sort();
@@ -138,6 +151,8 @@ export function normalizeJiraObservation(rawIssues, { dependencyLinkType = "Bloc
       dependencies: Object.freeze({ taskIds: Object.freeze(sortedDeps), unresolved: Object.freeze(unresolved.map((u) => Object.freeze(u))) }),
       acceptanceCriteria: ac.criteria === null ? null : Object.freeze(ac.criteria.map((c) => Object.freeze(c))),
       acceptanceCriteriaProblem: ac.problem,
+      // audit-only facts about how Loop materialized the issue; NOT plan-owned, so NOT fingerprinted
+      materialization: decoded?.metadata ?? null,
       // status is NOT part of the fingerprint: workflow state is Jira-owned
       observedFingerprint: planOwnedFingerprint({
         taskId: marker.id, title, epicId, dependsOn: sortedDeps, acceptanceCriteria: ac.criteria ?? [], problems,

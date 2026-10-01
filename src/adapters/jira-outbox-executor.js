@@ -1,6 +1,10 @@
 import { RuntimeRetryPolicy } from "../core/retry-policy.js";
 import { executionMarker } from "./jira-sync-client.js";
 import { OutboxError, deriveOperationId } from "./sqlite-outbox-store.js";
+import { encodeLoopDescription } from "../reconcile/jira-adf.js";
+import { normalizeJiraObservation } from "../reconcile/jira-observation.js";
+import { reconcilePlan } from "../reconcile/plan-reconciler.js";
+import { parseMaterializationConfig } from "../materialize/jira-materialization.js";
 
 /**
  * Drives outbox operations against Jira through JiraSyncClient (CP-01).
@@ -17,7 +21,10 @@ import { OutboxError, deriveOperationId } from "./sqlite-outbox-store.js";
  * An UNCERTAIN write is settled RETRY_WAIT(UNCERTAIN_WRITE); the next claim
  * reconciles remote state first, so there is never a blind re-write.
  *
- * Reserved, not implemented: JIRA_CREATE, JIRA_UPDATE, JIRA_SPRINT_ASSIGNMENT.
+ * JIRA_CREATE reconciles and verifies through the SAME pure reconcilePlan() used for decisions: a task
+ * counts as materialized only when exactly one issue carries its LOOP_TASK_ID and its plan-owned
+ * definition matches. A POST response alone is never proof.
+ * Reserved, not implemented: JIRA_UPDATE, JIRA_SPRINT_ASSIGNMENT.
  */
 
 const GLOBAL_BLOCK_CODES = new Set(["AUTH_INVALID", "AUTH_FORBIDDEN"]);
@@ -42,8 +49,41 @@ export function jiraTransitionOperation({ issueKey, executionId, doneStatusName,
   };
 }
 
-function handlers(jira) {
+/** Builds the single-task desired snapshot a JIRA_CREATE operation was approved against. */
+function createView(op, clock, jira) {
+  const config = parseMaterializationConfig(op.desiredState); // CONFIG_INVALID fails closed before any remote call
+  const m = op.desiredState.materialization;
+  const snapshot = {
+    documentId: m.sourceDocumentId, planVersion: m.planVersion, contentHash: m.snapshotContentHash,
+    tasks: [{ taskId: m.taskId, title: m.title, epicId: m.epicId, dependsOn: m.dependsOn, acceptanceCriteria: m.acceptanceCriteria, taskHash: m.taskHash }],
+  };
+  const decide = () => {
+    const observation = normalizeJiraObservation(jira.observeProject(config.projectKey));
+    const result = reconcilePlan({ snapshot, observation, createdAt: clock() });
+    return [...result.creates, ...result.noops, ...result.conflicts][0];
+  };
+  return { config, m, decide };
+}
+
+function handlers(jira, clock) {
   return {
+    JIRA_CREATE: {
+      reconcile(op) {
+        const record = createView(op, clock, jira).decide();
+        if (record.decision === "CREATE") return { state: "NOT_APPLIED" };
+        if (record.decision === "NOOP") return { state: "APPLIED", issueKey: record.jiraIssueKey };
+        return { state: "CONFLICT", code: record.reasonCode, detail: `${record.reasonCode}${record.jiraIssueKeys ? ` (${record.jiraIssueKeys.join(", ")})` : record.jiraIssueKey ? ` (${record.jiraIssueKey})` : ""}` };
+      },
+      async write(op, context) {
+        const { config, m, decide } = createView(op, clock, jira);
+        await jira.createIssue({ projectKey: config.projectKey, issueTypeName: config.issueTypeName, summary: m.title, description: encodeLoopDescription(m) }, context);
+        // read-after-write: exactly one issue with this LOOP_TASK_ID and a matching plan-owned definition
+        const record = decide();
+        if (record.decision === "NOOP") return { result: "CONFIRMED", issueKey: record.jiraIssueKey };
+        if (record.decision === "CREATE") return { result: "UNCERTAIN", detail: "no issue carrying the LOOP_TASK_ID found after create" };
+        return { result: "CONFLICT", code: record.reasonCode, detail: `${record.reasonCode}${record.jiraIssueKeys ? ` (${record.jiraIssueKeys.join(", ")})` : ""}` };
+      },
+    },
     JIRA_COMMENT: {
       reconcile: (op) => (jira.findMarkedComment(op.targetObject, op.desiredState.marker) ? { state: "APPLIED" } : { state: "NOT_APPLIED" }),
       async write(op, context) {
@@ -82,11 +122,20 @@ export class JiraOutboxExecutor {
     if (!store || !jira) throw new TypeError("JiraOutboxExecutor requires a store and a JiraSyncClient");
     if (typeof workerId !== "string" || workerId.trim() === "") throw new TypeError("workerId is required");
     Object.assign(this, { store, jira, workerId, claimTtlMs, retryPolicy, clock, faultPoints });
-    this.handlers = handlers(jira);
+    this.handlers = handlers(jira, clock);
   }
 
   enqueueComment(input) { return this.store.enqueue(jiraCommentOperation(input)); }
   enqueueTransition(input) { return this.store.enqueue(jiraTransitionOperation(input)); }
+
+  /** Enqueues an operation spec from the materialization layer. A changed payload under an existing id is reported, never duplicated. */
+  enqueueMaterialization(spec) {
+    try { return this.store.enqueue(spec); }
+    catch (error) {
+      if (error instanceof OutboxError && error.code === "OPERATION_ID_CONFLICT") return { created: false, conflict: true, code: error.code, operation: this.store.get(spec.operationId) };
+      throw error;
+    }
+  }
 
   async fault(name, payload) {
     if (typeof this.faultPoints[name] === "function") await this.faultPoints[name](payload);
@@ -108,12 +157,13 @@ export class JiraOutboxExecutor {
       const remote = await handler.reconcile(op);
       await this.fault("afterReconcile", { op, remote });
       if (remote.state === "APPLIED") return settle("CONFIRMED", { errorCode: null, errorDetail: recovered ? "reconciled: desired state already present" : null });
-      if (remote.state === "CONFLICT") return settle("CONFLICT", { errorCode: "STALE_STATE", errorDetail: remote.detail });
+      if (remote.state === "CONFLICT") return settle("CONFLICT", { errorCode: remote.code ?? "STALE_STATE", errorDetail: remote.detail });
       await context.assertLeaseCurrent();
       await this.fault("beforeRemoteWrite", op);
       const written = await handler.write(op, context);
       await this.fault("afterRemoteWrite", { op, written });
       if (written.result === "CONFIRMED") return settle("CONFIRMED");
+      if (written.result === "CONFLICT") return settle("CONFLICT", { errorCode: written.code ?? "STALE_STATE", errorDetail: written.detail });
       return this.retry(op, settle, { code: "UNCERTAIN_WRITE", message: written.detail ?? "write outcome could not be verified", classification: "TRANSIENT" });
     } catch (error) {
       if (error instanceof OutboxError && error.code === "CLAIM_LOST") return { owned: false, outcome: "CLAIM_LOST", operation: this.store.get(operationId) };
