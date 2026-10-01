@@ -307,3 +307,16 @@ test("HEARTBEAT: a live controller keeps its instance lease across an await long
     assert.equal((await b.controller.start()).owner, true, "after a graceful stop the lease is released at once");
   } finally { b.close(); }
 });
+
+test("a NON-transient runtime error blocks that task and alerts the Owner instead of crashing the service", async () => {
+  ws.setPlan(planText(1, task("TASK-001", "Only task")));
+  const boom = Object.assign(new Error("evidence event id conflict: x"), { name: "RuntimeError", code: "EVIDENCE_EVENT_CONFLICT", classification: "INVARIANT_VIOLATION" });
+  const h = open({ overrides: { runtimeFactory: () => ({ runtime: { runCycle: async () => { throw boom; }, checkpointStore: { read: () => null } } }) } });
+  await h.controller.start();
+  await drive(h, { until: (r) => r.phase === "BUILD_WORK_PACKAGE" });
+  const result = await h.controller.cycle(); // must resolve, not throw
+  assert.deepEqual([result.outcome, result.code], ["BLOCK_TASK", "EVIDENCE_EVENT_CONFLICT"]);
+  assert.equal(h.stores.controllerStore.get("TASK-001").status, "BLOCKED");
+  assert.match(h.stores.controllerStore.get("TASK-001").blockReason, /EVIDENCE_EVENT_CONFLICT/);
+  assert.deepEqual(h.notifier.events.map((e) => e.kind), ["UNRECOVERABLE_CONFLICT"]);
+});

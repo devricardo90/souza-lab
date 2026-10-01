@@ -56,6 +56,17 @@ export class SyntheticGitAgent extends AgentExecutor {
     return result;
   }
 
+  /** Correction round: addresses review findings with a NEW commit on the same branch (history is never rewritten). */
+  async correct(workPackage, { workspace, findings, round, facts }) {
+    this.record({ mode: "correct", taskId: workPackage.taskId, round, findings: (findings ?? []).map((f) => f.id), resumed: facts !== null });
+    const file = join(workspace.path, "impl", `${workPackage.taskId}.txt`);
+    const existing = existsSync(file) ? readFileSync(file, "utf8") : "";
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, `${existing}correction round ${round + 1}: ${(findings ?? []).map((f) => f.id).join(", ") || "none"} addressed\n`, "utf8");
+    this.crashpoint("after_correct_write");
+    return this.commit(workspace, workPackage, `fix(${workPackage.taskId}): address review findings (round ${round + 1})`);
+  }
+
   async resume(workPackage, { workspace, facts }) {
     const file = join(workspace.path, "impl", `${workPackage.taskId}.txt`);
     const preserved = existsSync(file) ? readFileSync(file, "utf8") : null;

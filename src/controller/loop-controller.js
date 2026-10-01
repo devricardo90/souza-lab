@@ -1,3 +1,4 @@
+import { Worker } from "node:worker_threads";
 import { normalizeJiraObservation } from "../reconcile/jira-observation.js";
 import { RelationshipConfigError, parseRelationshipConfig } from "../reconcile/jira-relationship.js";
 import { reconcilePlan } from "../reconcile/plan-reconciler.js";
@@ -34,7 +35,7 @@ export class LoopController {
     documentId, planSynchronizer, planStore, jira, outboxStore, outboxExecutor, controllerStore,
     materialization, completion = { doneStatusName: "Done", transitionName: "Done", expectedCurrentStatusNames: null },
     repository, runtimeFactory, notifier = new NullNotifier(), clock = () => new Date().toISOString(),
-    faultPoints = {}, defaultWaitMs = 5000, maxRuntimeCyclesPerTick = 50, persistentSourceFailureThreshold = 3, relationship = null,
+    faultPoints = {}, defaultWaitMs = 5000, maxRuntimeCyclesPerTick = 50, persistentSourceFailureThreshold = 3, relationship = null, heartbeatWorker = false,
   } = {}) {
     for (const [name, value] of Object.entries({ workspaceId, ownerId, leaseProvider, documentId, planSynchronizer, planStore, jira, outboxStore, outboxExecutor, controllerStore, materialization, repository, runtimeFactory })) {
       if (value === undefined || value === null || value === "") throw new TypeError(`LoopController requires ${name}`);
@@ -46,6 +47,8 @@ export class LoopController {
     });
     this.lease = null;
     this.leaseLostError = null;
+    this.heartbeatWorker = heartbeatWorker; // renew the instance lease from a separate thread (immune to blocking providers)
+    this.worker = null;
     this.heartbeat = null;
     this.renewing = false;
     this.startupRecovered = false;
@@ -87,6 +90,17 @@ export class LoopController {
    */
   startHeartbeat() {
     this.stopHeartbeat();
+    if (this.heartbeatWorker) {
+      this.worker = new Worker(new URL("./lease-heartbeat-worker.js", import.meta.url), {
+        workerData: { directory: this.leaseProvider.directory, lease: this.lease, ttlMs: this.instanceLeaseTtlMs, intervalMs: Math.max(100, Math.floor(this.instanceLeaseTtlMs / 3)) },
+      });
+      this.worker.on("message", (message) => {
+        if (message?.ok === false) this.leaseLostError = Object.assign(new Error(`instance lease heartbeat failed: ${message.message}`), { instanceLease: true, code: message.code });
+      });
+      this.worker.on("error", () => {});
+      this.worker.unref();
+      return;
+    }
     this.heartbeat = setInterval(async () => {
       if (!this.lease || this.renewing) return;
       this.renewing = true;
@@ -95,7 +109,10 @@ export class LoopController {
     this.heartbeat.unref?.();
   }
 
-  stopHeartbeat() { if (this.heartbeat) { clearInterval(this.heartbeat); this.heartbeat = null; } }
+  stopHeartbeat() {
+    if (this.heartbeat) { clearInterval(this.heartbeat); this.heartbeat = null; }
+    if (this.worker) { try { this.worker.postMessage({ type: "stop" }); } catch {} this.worker.terminate().catch(() => {}); this.worker = null; }
+  }
 
   async renewLease() {
     if (this.leaseLostError) throw this.leaseLostError;
@@ -223,7 +240,15 @@ export class LoopController {
       try { last = await runtime.runCycle({ executionId: wp.executionId, repository: wp.repository.identity }); }
       catch (error) {
         // A transient runtime failure (e.g. a predecessor's execution lease that has not expired yet) is a wait, never a process crash.
-        if (error?.runtimeCrash === true || !(error?.retryable === true || error?.classification === "TRANSIENT")) throw error;
+        if (error?.runtimeCrash === true) throw error;
+        if (!(error?.retryable === true || error?.classification === "TRANSIENT")) {
+          // A non-transient runtime failure (e.g. an evidence/invariant error) blocks THIS task and alerts the Owner; it must never
+          // crash the long-running service into a restart loop that repeats the same failure.
+          const reason = `runtime error ${error?.code ?? error?.name ?? "UNKNOWN"}: ${String(error?.message ?? error).slice(0, 300)}`;
+          this.controllerStore.transition(wp.taskId, "EXECUTING", "BLOCKED", { reason });
+          await this.notify("UNRECOVERABLE_CONFLICT", `wp:${wp.workPackageId}:runtime-error`, wp.taskId, reason);
+          return this.result("BLOCK_TASK", "EXECUTE", { taskId: wp.taskId, code: error?.code ?? "RUNTIME_ERROR", detail: reason });
+        }
         return this.result("RETRY_EXTERNAL", "EXECUTE", { taskId: wp.taskId, code: error.code ?? "TRANSIENT_RUNTIME_FAILURE", detail: String(error.message).slice(0, 200), nextWakeAt: this.wakeAt(null) });
       }
       this.runtimeCycles += 1;
@@ -238,7 +263,11 @@ export class LoopController {
       return this.result("CONTINUE", "LOCAL_DONE", { taskId: wp.taskId });
     }
     if (last.outcome === "WAIT_RETRYABLE") {
-      const outcome = state === "TESTING" ? "WAIT_CI" : state === "REVIEWING" ? "WAIT_REVIEW" : "RETRY_EXTERNAL";
+      // Classified from the observed facts (CI/review still running), not only from the state name: a pending CI run is
+      // reported by the state engine as WAIT_RETRYABLE, and a deterministic timer (never a model) decides when to look again.
+      const facts = last.observation?.recovery?.facts ?? {};
+      const outcome = (facts.ci?.status === "PENDING" || state === "TESTING") ? "WAIT_CI"
+        : (facts.review?.verdict === "PENDING" || state === "REVIEWING") ? "WAIT_REVIEW" : "RETRY_EXTERNAL";
       return this.result(outcome, "EXECUTE", { taskId: wp.taskId, nextWakeAt: this.wakeAt(last.checkpoint?.retry?.nextEligibleAt ?? null), detail: state });
     }
     const reason = `${last.outcome} in ${state}`;

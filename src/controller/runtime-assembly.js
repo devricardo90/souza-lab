@@ -9,6 +9,7 @@ import { JsonRuntimeCheckpointStore } from "../adapters/json-runtime-checkpoint-
 import { MarkdownProjectionStore } from "../adapters/markdown-projection-store.js";
 import { WorkPackageTaskSystem } from "./work-package.js";
 import { validateAgentResult } from "./ports.js";
+import { makeActionResult } from "../core/runtime-contracts.js";
 
 /**
  * Wires the EXISTING, unchanged LoopRuntime for one frozen WorkPackage. The Controller does not
@@ -43,30 +44,48 @@ export function createWorkPackageRuntime({ workPackage, directory, scope, leaseP
     contextProvider: () => ({ specRevision: { head: scope.baseHead }, specDigest: scope.specDigest }),
   });
   const done = (reference) => ({ outputReference: reference });
+  const actions = scope.actions;
   const capabilities = {
     WRITE_PROJECTIONS: (_action, ctx) => projectionStore.write({ executionId: ctx.executionId, computed: ctx.observation.computed }),
-    REQUEST_SPEC_REVIEW: () => done("spec-review-satisfied-by-base"),
-    PREPARE_IMPLEMENTATION: async () => {
+    REQUEST_SPEC_REVIEW: async (_action, ctx) => done(actions.requestSpecReview ? await actions.requestSpecReview(ctx) : "spec-review-satisfied-by-base"),
+    PREPARE_IMPLEMENTATION: async (_action, ctx) => {
       // Idempotent: an implementation already recorded for this work package is never produced twice.
       let result = scope.implementationResult();
       if (!result) {
         // With an ExecutionRunner the agent is only ever reached through the durable, crash-safe attempt protocol.
         result = executionRunner ? await executionRunner.ensureImplementation(workPackage) : validateAgentResult(await agentExecutor.execute(workPackage));
-        scope.actions.recordImplementation(result);
+        actions.recordImplementation(result);
+      } else if (actions.resumeCorrection) {
+        // A durable result already exists, so PREPARE_IMPLEMENTATION can only be planned because the workspace is dirty: an
+        // interrupted correction round. Resume it (never discard it).
+        await actions.resumeCorrection(ctx);
       }
       return done(result.head);
     },
-    RUN_TESTS: () => done(scope.actions.runTests()),
-    RUN_VALIDATION: (_action, ctx) => done(scope.actions.runValidation(ctx.observation.computed.state === "POST_MERGE_VALIDATION")),
-    RUN_POST_MERGE_VALIDATION: () => done(scope.actions.runValidation(true)),
-    REQUEST_REVIEW: () => done(scope.actions.requestReview()),
-    PREPARE_MERGE: () => done(scope.actions.prepareMerge()),
+    RUN_TESTS: async (action, ctx) => done(await actions.runTests(ctx, action)),
+    RUN_VALIDATION: async (action, ctx) => done(await actions.runValidation(ctx.observation.computed.state === "POST_MERGE_VALIDATION", ctx, action)),
+    RUN_POST_MERGE_VALIDATION: async (action, ctx) => done(await actions.runValidation(true, ctx, action)),
+    REQUEST_REVIEW: async (action, ctx) => done(await actions.requestReview(ctx, action)),
+    PREPARE_MERGE: async (action, ctx) => done(await actions.prepareMerge(ctx, action)),
+    ...(actions.createPullRequest ? { CREATE_PULL_REQUEST: async (action, ctx) => done(await actions.createPullRequest(ctx, action)) } : {}),
     COMPLETE: () => done("completed"),
     LOAD_TASK: () => done("task-loaded"),
     WAIT: () => done("waiting"),
     ESCALATE_OWNER: () => done("owner-block"),
     ESCALATE_EXTERNAL: () => done("external-block"),
   };
+  // Reconcile-before-execute: an externally visible action that already happened (PR created, merge done) is recognized, not repeated.
+  for (const [type, reconcile] of Object.entries(scope.reconcilers ?? {})) {
+    capabilities[type].reconcile = async (action) => {
+      const found = await reconcile(action);
+      if (found.status !== "COMPLETED") return { status: found.status };
+      const now = new Date().toISOString();
+      return { status: "COMPLETED", result: makeActionResult({
+        actionId: action.actionId, executionId: action.executionId, cycleId: action.cycleId, taskId: action.taskId, candidateRevision: action.candidateRevision,
+        result: "SUCCEEDED", startedAt: now, finishedAt: now, provider: "remote-reconciliation", outputReference: found.output, retryable: false,
+      }) };
+    };
+  }
   const executor = new FakeCapabilityExecutor({ capabilities, provider: "controller-runtime" });
   const runtime = new LoopRuntime({
     observer, executor, evidenceStore, evidenceCheckpointProvider, checkpointStore, leaseProvider,

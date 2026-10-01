@@ -14,6 +14,10 @@ import { InjectedGooglePlanGateway } from "../plan/google-plan-gateway.js";
 import { PlanSourceSynchronizer } from "../plan/plan-source-sync.js";
 import { SyntheticAgentExecutor, SyntheticLifecycle } from "./synthetic-lifecycle.js";
 import { SyntheticGitAgent } from "./synthetic-git-agent.js";
+import { createFakeGitHub } from "./fake-github.js";
+import { DeterministicReviewer, DeterministicValidator } from "./deterministic-gates.js";
+import { SqliteGateFactStore } from "../adapters/sqlite-gate-fact-store.js";
+import { composeGitHubLifecycle } from "../controller/production-composition.js";
 import { SqliteExecutionAttemptStore } from "../adapters/sqlite-execution-attempt-store.js";
 import { ExecutionRunner } from "../controller/execution-runner.js";
 
@@ -51,7 +55,7 @@ export function buildSyntheticController(config, env = process.env, overrides = 
   const ownerId = config.ownerId ?? `controller-${process.pid}`;
   const relationship = config.jira.relationship === undefined ? SYNTHETIC_BLOCKS_RELATIONSHIP : config.jira.relationship; // explicit synthetic "Blocks" mapping; a real profile must supply its own
   const outboxExecutor = new JiraOutboxExecutor({ store: outboxStore, jira, workerId: ownerId, claimTtlMs: config.outboxClaimTtlMs ?? 60000, clock, relationship });
-  const lifecycle = new SyntheticLifecycle({ directory: join(dir, "lifecycle") });
+  let lifecycle = new SyntheticLifecycle({ directory: join(dir, "lifecycle") });
   // config.git switches the agent boundary to a REAL Git workspace with durable execution attempts (CP-06).
   const attemptStore = config.git ? new SqliteExecutionAttemptStore({ path: join(dir, "execution-attempts.sqlite"), clock }) : null;
   const agent = overrides.agent ?? (config.git
@@ -68,7 +72,19 @@ export function buildSyntheticController(config, env = process.env, overrides = 
     };
   }
   Object.assign(faultPoints, overrides.faultPoints ?? {});
+  const gateStore = config.github ? new SqliteGateFactStore({ path: join(dir, "gate-facts.sqlite"), clock }) : null;
+  let githubFake = null;
   const executionRunner = config.git ? new ExecutionRunner({ attemptStore, agent, repoPath: config.git.repoPath, workspacesDir: join(dir, "workspaces"), faultPoints: { ...faultPoints } }) : null;
+
+  if (config.github) {
+    // CP-07: the REAL Git/GitHub lifecycle (Phase 6 providers) replaces the synthetic CI/review/merge facts.
+    // GitHub itself is the fake REST backend unless config.github.live is set (then the real `gh` runner is used).
+    githubFake = config.github.fake ? createFakeGitHub({ ...config.github.fake, owner: config.github.owner, repo: config.github.repo, workflowPath: config.github.workflowIdentity }) : null;
+    const reviewer = overrides.reviewer ?? new DeterministicReviewer({ recordPath: join(dir, "review-calls.jsonl"), findingsOnReviews: config.github.findingsOnReviews ?? 0, unavailableFile: config.github.reviewerUnavailableFile ?? null });
+    const validator = overrides.validator ?? new DeterministicValidator({ recordPath: join(dir, "validation-calls.jsonl") });
+    // the SAME production composition a real deployment uses; only the gh command runner is faked (the providers' injection point)
+    lifecycle = composeGitHubLifecycle({ github: config.github, repoPath: config.git.repoPath, attemptStore, gateStore, reviewer, validator, agent, clock, faultPoints: { ...faultPoints }, run: githubFake?.run ?? null });
+  }
 
   const controller = new LoopController({
     workspaceId: config.workspaceId ?? "synthetic", ownerId, leaseProvider, instanceLeaseTtlMs: timings.instanceLeaseTtlMs,
@@ -76,10 +92,11 @@ export function buildSyntheticController(config, env = process.env, overrides = 
     materialization: { projectKey: config.jira.projectKey, issueTypeName: config.jira.issueTypeName ?? "Task" },
     completion: { doneStatusName: "Done", transitionName: "Done", expectedCurrentStatusNames: null },
     repository: config.repository, notifier, clock, faultPoints, defaultWaitMs: timings.defaultWaitMs, relationship,
+    heartbeatWorker: config.heartbeatWorker ?? !overrides.clock, // thread-based heartbeat unless a fake clock is injected (tests with stepping time)
     runtimeFactory: overrides.runtimeFactory ?? ((workPackage) => createWorkPackageRuntime({
       workPackage, directory: join(dir, "executions"), scope: lifecycle.scope(workPackage), leaseProvider, ownerId: config.workspaceId ?? "synthetic", agentExecutor: agent, executionRunner, clock,
     })),
   });
-  const close = () => { for (const store of [planStore, outboxStore, controllerStore, attemptStore]) { try { store?.close(); } catch {} } };
-  return { controller, close, agent, notifier, stores: { planStore, outboxStore, controllerStore, attemptStore }, leaseProvider, outboxExecutor, jira };
+  const close = () => { for (const store of [planStore, outboxStore, controllerStore, attemptStore, gateStore]) { try { store?.close(); } catch {} } };
+  return { controller, close, agent, notifier, stores: { planStore, outboxStore, controllerStore, attemptStore, gateStore }, githubFake, lifecycle, leaseProvider, outboxExecutor, jira };
 }
