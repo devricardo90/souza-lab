@@ -270,7 +270,8 @@ test("SINGLE INSTANCE: controller B cannot become active while A holds the works
     assert.deepEqual(await b.controller.start(), { owner: false, reason: "EXECUTION_LEASE_UNAVAILABLE" });
     await assert.rejects(b.controller.cycle(), /has not started/, "a non-owner never runs a cycle");
     assert.equal(a.agent.calls.length + b.agent.calls.length, 0);
-    await new Promise((resolve) => setTimeout(resolve, 1700)); // A "dies": it stops renewing
+    a.controller.stopHeartbeat(); // A "dies": it stops renewing (the heartbeat is what keeps a live controller's lease valid)
+    await new Promise((resolve) => setTimeout(resolve, 1700));
     assert.equal((await b.controller.start()).owner, true);
     const fenced = await a.controller.cycle();
     assert.deepEqual([fenced.outcome, fenced.code], ["BLOCK_GLOBAL", "CONTROLLER_LEASE_LOST"]);
@@ -292,4 +293,17 @@ test("GRACEFUL SHUTDOWN: aborting the process loop finishes the cycle, releases 
   assert.equal(h.controller.lease, null, "lease released on shutdown");
   const next = inProcessController({ ws, port: mock.port, configExtra: { ownerId: "after-shutdown" } });
   try { assert.equal((await next.controller.start()).owner, true, "no waiting for lease expiry after a graceful stop"); } finally { next.close(); }
+});
+
+test("HEARTBEAT: a live controller keeps its instance lease across an await longer than the TTL (e.g. a long agent run); a second controller still cannot take over", async () => {
+  const fast = { timings: { instanceLeaseTtlMs: 1500, defaultWaitMs: 200 } };
+  const a = open({ configExtra: { ...fast, ownerId: "long-runner" } });
+  assert.equal((await a.controller.start()).owner, true);
+  await new Promise((resolve) => setTimeout(resolve, 3200)); // > 2x the TTL with the event loop free, as during an asynchronous agent call
+  const b = inProcessController({ ws, port: mock.port, configExtra: { ...fast, ownerId: "would-be-thief" } });
+  try {
+    assert.equal((await b.controller.start()).owner, false, "the heartbeat kept A's lease valid");
+    await a.controller.stop();
+    assert.equal((await b.controller.start()).owner, true, "after a graceful stop the lease is released at once");
+  } finally { b.close(); }
 });

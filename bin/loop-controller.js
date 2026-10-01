@@ -32,7 +32,7 @@ try {
       controller, signal: abort.signal, exitOnCompleted: config.exitOnCompleted === true,
       idlePollMs: config.timings?.idlePollMs ?? 5000, standbyPollMs: config.timings?.standbyPollMs ?? 1000,
       blockedPollMs: config.timings?.blockedPollMs ?? 30000,
-      onCycle: (cycle) => log({ event: "cycle", outcome: cycle.outcome ?? cycle.phase, phase: cycle.phase, taskId: cycle.taskId ?? null, code: cycle.code ?? null }),
+      onCycle: (cycle) => log({ event: "cycle", outcome: cycle.outcome ?? cycle.phase, phase: cycle.phase, taskId: cycle.taskId ?? null, code: cycle.code ?? null, detail: cycle.detail ? String(cycle.detail).slice(0, 200) : undefined }),
     });
     log({ event: "exit", ...result });
     if (result.exit === "LEASE_LOST") exitCode = 75;

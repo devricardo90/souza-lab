@@ -21,7 +21,7 @@ beforeEach(async () => { cleanup(); await mock.reset(); ws = workspace(); });
 after(cleanup);
 
 // The instance lease TTL must exceed the longest blocking step of one cycle (a Jira create is several sequential curl calls).
-const FAST = { instanceLeaseTtlMs: 8000, defaultWaitMs: 200, standbyPollMs: 300, idlePollMs: 500, blockedPollMs: 500 };
+const FAST = { instanceLeaseTtlMs: 15000, defaultWaitMs: 200, standbyPollMs: 300, idlePollMs: 500, blockedPollMs: 500 };
 const writeConfig = (name, extra = {}) => {
   const path = join(ws.dir, `${name}.json`);
   writeFileSync(path, JSON.stringify(baseConfig({ ws, port: mock.port, extra: { timings: FAST, ownerId: name, ...extra } })), "utf8");
@@ -94,13 +94,13 @@ test("SINGLE INSTANCE (real processes): a second controller stays in standby whi
   const a = spawnController("proc-A");
   await waitFor(() => a.lines.some((l) => l.phase === "STARTED"));
   const b = spawnController("proc-B");
-  await new Promise((resolve) => setTimeout(resolve, 10000)); // longer than the 8s lease TTL: B would have taken over if A were not renewing
+  await new Promise((resolve) => setTimeout(resolve, 17000)); // longer than the 15s lease TTL: B would have taken over if A were not renewing
   assert.ok(!b.lines.some((l) => l.phase === "STARTED"), "B must not become active while A owns the workspace");
   assert.ok(!b.lines.some((l) => l.event === "cycle" && l.phase !== "STARTED"), "B ran no cycles");
 
   a.child.kill(); // abrupt: no graceful lease release
   await a.exited;
-  await waitFor(() => b.lines.some((l) => l.phase === "STARTED"), { timeoutMs: 25000 });
+  await waitFor(() => b.lines.some((l) => l.phase === "STARTED"), { timeoutMs: 40000 });
   b.child.kill();
   await b.exited;
 });

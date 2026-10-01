@@ -45,6 +45,9 @@ export class LoopController {
       maxRuntimeCyclesPerTick, persistentSourceFailureThreshold,
     });
     this.lease = null;
+    this.leaseLostError = null;
+    this.heartbeat = null;
+    this.renewing = false;
     this.startupRecovered = false;
     this.runtimes = new Map();
     // Explicit dependency-link semantics (no implicit direction). Invalid configuration fails at construction.
@@ -67,16 +70,37 @@ export class LoopController {
       if (error instanceof ExecutionLeaseUnavailableError || error?.code === "EXECUTION_LEASE_UNAVAILABLE") return { owner: false, reason: error.code };
       throw error;
     }
+    this.leaseLostError = null;
+    this.startHeartbeat();
     const report = await this.recoverOnStartup();
     return { owner: true, report };
   }
 
   async stop() {
+    this.stopHeartbeat();
     if (this.lease) { try { await this.leaseProvider.release(this.lease); } catch {} this.lease = null; }
   }
 
+  /**
+   * Keeps the instance lease alive while the event loop is free (e.g. during a long, asynchronous agent execution that lasts
+   * longer than the lease TTL). A failed renewal is remembered and ends the owner's authority at its next step.
+   */
+  startHeartbeat() {
+    this.stopHeartbeat();
+    this.heartbeat = setInterval(async () => {
+      if (!this.lease || this.renewing) return;
+      this.renewing = true;
+      try { await this.renewLease(); } catch { /* recorded by renewLease; the next cycle step reports the loss */ } finally { this.renewing = false; }
+    }, Math.max(100, Math.floor(this.instanceLeaseTtlMs / 3)));
+    this.heartbeat.unref?.();
+  }
+
+  stopHeartbeat() { if (this.heartbeat) { clearInterval(this.heartbeat); this.heartbeat = null; } }
+
   async renewLease() {
-    this.lease = await this.leaseProvider.renew(this.lease, { ttlMs: this.instanceLeaseTtlMs });
+    if (this.leaseLostError) throw this.leaseLostError;
+    try { this.lease = await this.leaseProvider.renew(this.lease, { ttlMs: this.instanceLeaseTtlMs }); }
+    catch (error) { error.instanceLease = true; this.leaseLostError = error; throw error; }
   }
 
   /** Startup order: (lock held) -> recover unfinished outbox operations -> verify runtime checkpoints -> only then may work be selected. */
@@ -137,14 +161,21 @@ export class LoopController {
   failedOps() { return this.outboxStore.list().filter((op) => op.status === "CONFLICT" || op.status === "FAILED_PERMANENT"); }
 
   // ---------------- one deterministic cycle ----------------
+  /** One cycle. Losing the instance lease at ANY step ends this controller's authority cleanly (never a crash, never a stale write). */
   async cycle() {
     if (!this.lease) throw new Error("controller has not started (no instance lease)");
-    try { await this.renewLease(); }
+    try { return await this.cycleBody(); }
     catch (error) {
+      if (error?.instanceLease !== true) throw error;
+      this.stopHeartbeat();
       this.lease = null;
       await this.notify("CONTROLLER_LEASE_LOST", `lease-lost:${this.ownerId}`, null, error.message);
       return this.result("BLOCK_GLOBAL", "OWNERSHIP", { code: "CONTROLLER_LEASE_LOST", detail: error.message });
     }
+  }
+
+  async cycleBody() {
+    await this.renewLease();
 
     // 1. external operations first: a restart never selects new work before pending work is reconciled
     const recovered = await this.recoverOps();
@@ -189,7 +220,12 @@ export class LoopController {
     let last = null;
     for (let index = 0; index < this.maxRuntimeCyclesPerTick; index += 1) {
       await this.renewLease();
-      last = await runtime.runCycle({ executionId: wp.executionId, repository: wp.repository.identity });
+      try { last = await runtime.runCycle({ executionId: wp.executionId, repository: wp.repository.identity }); }
+      catch (error) {
+        // A transient runtime failure (e.g. a predecessor's execution lease that has not expired yet) is a wait, never a process crash.
+        if (error?.runtimeCrash === true || !(error?.retryable === true || error?.classification === "TRANSIENT")) throw error;
+        return this.result("RETRY_EXTERNAL", "EXECUTE", { taskId: wp.taskId, code: error.code ?? "TRANSIENT_RUNTIME_FAILURE", detail: String(error.message).slice(0, 200), nextWakeAt: this.wakeAt(null) });
+      }
       this.runtimeCycles += 1;
       await this.fault("after_runtime_cycle", { taskId: wp.taskId, cycle: last, count: this.runtimeCycles });
       if (last.outcome !== "CONTINUE") break;

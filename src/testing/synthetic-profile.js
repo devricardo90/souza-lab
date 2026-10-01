@@ -13,6 +13,9 @@ import { FakeNotifier } from "../controller/ports.js";
 import { InjectedGooglePlanGateway } from "../plan/google-plan-gateway.js";
 import { PlanSourceSynchronizer } from "../plan/plan-source-sync.js";
 import { SyntheticAgentExecutor, SyntheticLifecycle } from "./synthetic-lifecycle.js";
+import { SyntheticGitAgent } from "./synthetic-git-agent.js";
+import { SqliteExecutionAttemptStore } from "../adapters/sqlite-execution-attempt-store.js";
+import { ExecutionRunner } from "../controller/execution-runner.js";
 
 /**
  * Composition of the Controller from SYNTHETIC providers (fake Google, fake agent, fake lifecycle) plus
@@ -49,7 +52,11 @@ export function buildSyntheticController(config, env = process.env, overrides = 
   const relationship = config.jira.relationship === undefined ? SYNTHETIC_BLOCKS_RELATIONSHIP : config.jira.relationship; // explicit synthetic "Blocks" mapping; a real profile must supply its own
   const outboxExecutor = new JiraOutboxExecutor({ store: outboxStore, jira, workerId: ownerId, claimTtlMs: config.outboxClaimTtlMs ?? 60000, clock, relationship });
   const lifecycle = new SyntheticLifecycle({ directory: join(dir, "lifecycle") });
-  const agent = overrides.agent ?? new SyntheticAgentExecutor({ recordPath: config.agentRecordPath ?? join(dir, "agent-calls.jsonl") });
+  // config.git switches the agent boundary to a REAL Git workspace with durable execution attempts (CP-06).
+  const attemptStore = config.git ? new SqliteExecutionAttemptStore({ path: join(dir, "execution-attempts.sqlite"), clock }) : null;
+  const agent = overrides.agent ?? (config.git
+    ? new SyntheticGitAgent({ recordPath: config.agentRecordPath ?? join(dir, "agent-calls.jsonl"), crashAt: config.agentCrashAt ?? null, crashMarkerDir: dir })
+    : new SyntheticAgentExecutor({ recordPath: config.agentRecordPath ?? join(dir, "agent-calls.jsonl") }));
   const notifier = overrides.notifier ?? new FakeNotifier();
 
   const counts = new Map();
@@ -61,6 +68,7 @@ export function buildSyntheticController(config, env = process.env, overrides = 
     };
   }
   Object.assign(faultPoints, overrides.faultPoints ?? {});
+  const executionRunner = config.git ? new ExecutionRunner({ attemptStore, agent, repoPath: config.git.repoPath, workspacesDir: join(dir, "workspaces"), faultPoints: { ...faultPoints } }) : null;
 
   const controller = new LoopController({
     workspaceId: config.workspaceId ?? "synthetic", ownerId, leaseProvider, instanceLeaseTtlMs: timings.instanceLeaseTtlMs,
@@ -69,9 +77,9 @@ export function buildSyntheticController(config, env = process.env, overrides = 
     completion: { doneStatusName: "Done", transitionName: "Done", expectedCurrentStatusNames: null },
     repository: config.repository, notifier, clock, faultPoints, defaultWaitMs: timings.defaultWaitMs, relationship,
     runtimeFactory: overrides.runtimeFactory ?? ((workPackage) => createWorkPackageRuntime({
-      workPackage, directory: join(dir, "executions"), scope: lifecycle.scope(workPackage), leaseProvider, ownerId, agentExecutor: agent, clock,
+      workPackage, directory: join(dir, "executions"), scope: lifecycle.scope(workPackage), leaseProvider, ownerId: config.workspaceId ?? "synthetic", agentExecutor: agent, executionRunner, clock,
     })),
   });
-  const close = () => { for (const store of [planStore, outboxStore, controllerStore]) { try { store.close(); } catch {} } };
-  return { controller, close, agent, notifier, stores: { planStore, outboxStore, controllerStore }, leaseProvider, outboxExecutor, jira };
+  const close = () => { for (const store of [planStore, outboxStore, controllerStore, attemptStore]) { try { store?.close(); } catch {} } };
+  return { controller, close, agent, notifier, stores: { planStore, outboxStore, controllerStore, attemptStore }, leaseProvider, outboxExecutor, jira };
 }

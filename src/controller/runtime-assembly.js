@@ -27,7 +27,7 @@ import { validateAgentResult } from "./ports.js";
  * same execution from its evidence log and runtime checkpoint.
  */
 
-export function createWorkPackageRuntime({ workPackage, directory, scope, leaseProvider, ownerId, agentExecutor, clock = () => new Date().toISOString(), runtimeOptions = {} }) {
+export function createWorkPackageRuntime({ workPackage, directory, scope, leaseProvider, ownerId, agentExecutor, executionRunner = null, clock = () => new Date().toISOString(), runtimeOptions = {} }) {
   const root = join(directory, workPackage.executionId);
   const evidenceStore = new JsonlEvidenceStore({ path: join(root, "evidence.jsonl") });
   const evidenceCheckpointProvider = new LocalEvidenceCheckpointProvider({ path: join(root, "evidence-root.json") });
@@ -50,7 +50,8 @@ export function createWorkPackageRuntime({ workPackage, directory, scope, leaseP
       // Idempotent: an implementation already recorded for this work package is never produced twice.
       let result = scope.implementationResult();
       if (!result) {
-        result = validateAgentResult(await agentExecutor.execute(workPackage));
+        // With an ExecutionRunner the agent is only ever reached through the durable, crash-safe attempt protocol.
+        result = executionRunner ? await executionRunner.ensureImplementation(workPackage) : validateAgentResult(await agentExecutor.execute(workPackage));
         scope.actions.recordImplementation(result);
       }
       return done(result.head);

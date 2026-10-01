@@ -88,7 +88,7 @@ export class SyntheticLifecycle {
         runValidation: (isPostMerge) => {
           const state = read();
           if (isPostMerge) update({ postMergeValidation: proof(mergeHead(state.revision.head), state.revision.head), completed: true });
-          else update({ validation: proof(state.revision.head, BASE) });
+          else update({ validation: proof(state.revision.head, state.revision.base) });
           return isPostMerge ? "post-validation" : "validation";
         },
         requestReview: () => { const head = read().revision.head; update({ review: { head, verdict: "CLEAN", independent: true, unresolvedFindings: 0, publishedAt: "2026-09-30T09:00:00.000Z", reviewerId: "synthetic-reviewer@example.invalid" } }); return "review"; },
