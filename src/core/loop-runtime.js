@@ -31,6 +31,13 @@ function equivalentEvent(left, right) {
   return fingerprint(omitTime(left)) === fingerprint(omitTime(right));
 }
 
+const GUARD_PROVIDER = "runtime-precondition-guard";
+
+/** A guard abort is retryable ONLY when it was recorded as such (TRANSIENT + retryable). Unclassified or terminal BLOCKED fails closed. */
+function isRetryableGuardAbort(payload) {
+  return payload?.result === "BLOCKED" && payload?.provider === GUARD_PROVIDER && payload?.retryable === true && payload?.errorClass === "TRANSIENT";
+}
+
 function validateSuccessResult(value, action) {
   const result = makeActionResult(value);
   if (result.actionId !== action.actionId || result.executionId !== action.executionId
@@ -108,9 +115,12 @@ export class LoopRuntime {
 
   attemptFor(observation, planned) {
     const baseFingerprint = planned.inputFingerprint;
+    // A consumed attempt is a FAILED/WAITING result OR a RETRYABLE precondition-guard abort (the guard observation hit a retryable
+    // provider failure and so could not establish reliable facts). Counting the latter gives the replan a new action id and result
+    // event id instead of colliding with the immutable BLOCKED evidence. Every other BLOCKED result stays terminal and uncounted.
     const attempts = this.evidenceStore.listAll()
       .filter((event) => event.eventType === "ACTION_RESULT" && event.payload?.inputFingerprint === baseFingerprint
-        && (event.payload?.result === "FAILED" || event.payload?.result === "WAITING"))
+        && (event.payload?.result === "FAILED" || event.payload?.result === "WAITING" || isRetryableGuardAbort(event.payload)))
       .length;
     return attempts + 1;
   }
@@ -278,11 +288,15 @@ export class LoopRuntime {
       if (fresh.computed.state !== planned.preconditions.computedState
         || fresh.computed.candidateHead !== planned.preconditions.candidateRevision
         || freshFingerprint !== planned.preconditions.recoveryInputFingerprint) {
+        // The guard observation hit a RETRYABLE provider failure => facts are unreliable, not changed: the abort is retryable.
+        const unreliableFacts = fresh.recovery?.providerFailure?.retryable === true;
         actionResult = makeActionResult({
           actionId: planned.actionId, result: "BLOCKED", startedAt: this.clock(), finishedAt: this.clock(),
           executionId, cycleId, taskId: planned.taskId, candidateRevision: planned.candidateRevision,
-          provider: "runtime-precondition-guard", errorClass: "INVARIANT_VIOLATION", retryable: false,
-          errorMessage: "authoritative facts changed after planning; action aborted",
+          provider: GUARD_PROVIDER, errorClass: unreliableFacts ? "TRANSIENT" : "INVARIANT_VIOLATION", retryable: unreliableFacts,
+          errorMessage: unreliableFacts
+            ? "guard observation could not establish reliable current facts (retryable provider failure); action aborted, replan"
+            : "authoritative facts changed after planning; action aborted",
         });
         observation = fresh;
         outcome = "CONTINUE";
