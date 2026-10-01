@@ -4,6 +4,7 @@ import {
   JiraAdapterError, JiraTaskSourceError, JiraTaskSystemAdapter,
   mapDependencies, mapIssueToTask, parseAcceptanceCriteria,
 } from "../src/adapters/jira-task-adapter.js";
+import { SYNTHETIC_BLOCKS_RELATIONSHIP } from "../src/reconcile/jira-relationship.js";
 import { RecoveryCoordinator } from "../src/core/recovery-coordinator.js";
 import { FakeCIProvider, FakeGitProvider, FakeReviewProvider, FakeSCMProvider, FakeValidationProvider } from "../src/testing/fake-providers.js";
 
@@ -28,7 +29,7 @@ function searchResponse(issues) {
 function adapter({ transport, ...overrides } = {}) {
   return new JiraTaskSystemAdapter({
     site: SITE, email: "loop@example.invalid", apiToken: "token", projectKey: PROJECT,
-    statusMapping: STATUS_MAPPING, transport, ...overrides,
+    statusMapping: STATUS_MAPPING, relationship: SYNTHETIC_BLOCKS_RELATIONSHIP, transport, ...overrides,
   });
 }
 
@@ -79,7 +80,7 @@ test("J09 unknown dependency relation is never silently treated as a dependency"
     key: "LOOP-2", description: AC_BLOCK,
     issuelinks: [{ type: { name: "Relates" }, inwardIssue: { key: "LOOP-1" } }],
   });
-  const dependencies = mapDependencies(linked, { dependencyLinkType: "Blocks" });
+  const dependencies = mapDependencies(linked, { relationship: SYNTHETIC_BLOCKS_RELATIONSHIP });
   assert.deepEqual(dependencies, []);
 });
 

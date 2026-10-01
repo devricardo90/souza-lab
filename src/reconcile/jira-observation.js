@@ -1,5 +1,6 @@
 import { cleanText, planOwnedFingerprint } from "./fingerprint.js";
 import { decodeLoopDescription, epicIdFromAdf } from "./jira-adf.js";
+import { blockerOf, parseRelationshipConfig } from "./jira-relationship.js";
 
 /**
  * Pure, read-only normalization of raw Jira issues into a model suitable for deterministic
@@ -73,7 +74,13 @@ function parseAc(description) {
   return { criteria: criteria.sort((a, b) => (a.id < b.id ? -1 : 1)), problem: null };
 }
 
-export function normalizeJiraObservation(rawIssues, { dependencyLinkType = "Blocks", epicIssueType = "Epic" } = {}) {
+/**
+ * `relationship` (see jira-relationship.js) is the ONLY definition of how "depends on" is expressed in Jira links. With no
+ * relationship configured, an issue that has ANY link entries gets an explicit unresolved dependency (RELATIONSHIP_CONFIG_MISSING)
+ * instead of a guessed direction, so reconciliation fails closed.
+ */
+export function normalizeJiraObservation(rawIssues, { relationship = null, epicIssueType = "Epic" } = {}) {
+  const relation = relationship === null ? null : parseRelationshipConfig(relationship);
   if (!Array.isArray(rawIssues)) throw new JiraObservationError("raw Jira issues must be an array");
   const seenKeys = new Set();
   for (const raw of rawIssues) {
@@ -119,9 +126,14 @@ export function normalizeJiraObservation(rawIssues, { dependencyLinkType = "Bloc
     const dependsOn = new Set();
     const unresolved = [];
     for (const link of Array.isArray(fields.issuelinks) ? fields.issuelinks : []) {
-      if (link?.type?.name !== dependencyLinkType) continue;
-      const blockerKey = link?.inwardIssue?.key;
-      if (typeof blockerKey !== "string") continue;
+      if (relation === null) {
+        const other = link?.inwardIssue?.key ?? link?.outwardIssue?.key ?? "unknown";
+        unresolved.push({ key: other, reason: "RELATIONSHIP_CONFIG_MISSING" });
+        problems.push(`dependency:${other}:RELATIONSHIP_CONFIG_MISSING`);
+        continue;
+      }
+      const blockerKey = blockerOf(relation, link); // the single, explicit read mapping
+      if (blockerKey === null) continue;
       let reason = null;
       if (!seenKeys.has(blockerKey) || epicIdByKey.has(blockerKey)) reason = "UNKNOWN_ISSUE";
       else {

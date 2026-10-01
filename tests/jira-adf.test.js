@@ -1,3 +1,4 @@
+import { SYNTHETIC_BLOCKS_RELATIONSHIP } from "../src/reconcile/jira-relationship.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
@@ -96,7 +97,7 @@ test("epic marker is read only from a clean top-level ADF line", () => {
 const snapshot = makePlanSnapshot({ documentId: "doc-1", compiled: compilePlan(`LOOP_EXECUTION_PLAN: 1\nPLAN_VERSION: 4\nTASK_ID: RT-1\nTITLE: Alpha\nAC:\n- AC-001: first\n- AC-002: second thing\nEND_LOOP_EXECUTION_PLAN\n`), fetchedAt: NOW, compiledAt: NOW });
 const task = snapshot.tasks[0];
 const adfIssue = (key, description, summary = "Alpha") => ({ key, fields: { summary, status: { name: "To Do" }, description, issuelinks: [] } });
-const reconcile = (raw) => reconcilePlan({ snapshot, observation: normalizeJiraObservation(raw), createdAt: NOW });
+const reconcile = (raw) => reconcilePlan({ snapshot, observation: normalizeJiraObservation(raw, { relationship: SYNTHETIC_BLOCKS_RELATIONSHIP }), createdAt: NOW });
 const loopDoc = () => encodeLoopDescription({ taskId: "RT-1", sourceDocumentId: "doc-1", planVersion: 4, snapshotContentHash: snapshot.contentHash, taskHash: task.taskHash, acceptanceCriteria: task.acceptanceCriteria });
 
 test("a Loop-written ADF issue is observed correctly and reconciles to NOOP / STATE_MATCH, with audit metadata kept out of the fingerprint", () => {

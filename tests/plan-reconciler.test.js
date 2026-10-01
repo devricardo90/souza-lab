@@ -1,3 +1,4 @@
+import { SYNTHETIC_BLOCKS_RELATIONSHIP } from "../src/reconcile/jira-relationship.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
@@ -27,7 +28,7 @@ const jira = (key, marker, title, { status = "To Do", ac, parent, blockedBy = []
   },
 });
 const epicIssue = (key, epicId) => ({ key, fields: { summary: `Epic ${epicId}`, issuetype: { name: "Epic" }, description: `LOOP_EPIC_ID: ${epicId}\n`, status: { name: "To Do" } } });
-const run = (snap, raw, extra = {}) => reconcilePlan({ snapshot: snap, observation: normalizeJiraObservation(raw), createdAt: NOW, ...extra });
+const run = (snap, raw, extra = {}) => reconcilePlan({ snapshot: snap, observation: normalizeJiraObservation(raw, { relationship: SYNTHETIC_BLOCKS_RELATIONSHIP }), createdAt: NOW, ...extra });
 const one = (result) => [...result.creates, ...result.noops, ...result.conflicts][0];
 
 const S1 = snapshot(1, block("RT-1", "Alpha"));

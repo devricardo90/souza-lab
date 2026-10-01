@@ -1,5 +1,6 @@
 import { TaskSystemAdapter, makeTask } from "../core/contracts.js";
 import { resolveNextTask } from "./markdown-task-adapter.js";
+import { blockerOf, parseRelationshipConfig } from "../reconcile/jira-relationship.js";
 import { annotateError, classifyJiraFacts, isFacts, jiraCurlTransport, redact } from "./jira-transport.js";
 
 /**
@@ -129,20 +130,22 @@ function extractSection(descriptionText) {
 }
 
 /**
- * Maps explicit Jira issue links of the configured link type into canonical
- * dependencies. Only the inward ("is blocked by") direction of the
- * configured relation becomes a dependency; every other link type or
- * direction is ignored rather than guessed at.
+ * Maps explicit Jira issue links into canonical dependencies using ONLY the explicit relationship
+ * configuration (jira-relationship.js): there is no implicit link type or direction. An issue that has link
+ * entries while no relationship is configured fails closed (RELATIONSHIP_CONFIG_INVALID) instead of guessing.
  */
-export function mapDependencies(issue, { dependencyLinkType = "Blocks" } = {}) {
+export function mapDependencies(issue, { relationship = null } = {}) {
   const links = Array.isArray(issue.fields?.issuelinks) ? issue.fields.issuelinks : [];
+  if (relationship === null) {
+    if (links.length > 0) throw new JiraTaskSourceError(`${issue.key}: issue links found but no relationship configuration is set (no implicit direction)`, "RELATIONSHIP_CONFIG_INVALID");
+    return [];
+  }
+  const relation = parseRelationshipConfig(relationship);
   const dependencies = [];
   const seen = new Set();
   for (const link of links) {
-    const typeName = link?.type?.name;
-    if (typeName !== dependencyLinkType) continue;
-    const blockedBy = link?.inwardIssue?.key;
-    if (typeof blockedBy !== "string" || blockedBy.trim() === "") continue;
+    const blockedBy = blockerOf(relation, link);
+    if (blockedBy === null) continue;
     if (seen.has(blockedBy)) continue;
     seen.add(blockedBy);
     dependencies.push({ taskId: blockedBy, requiresDone: true });
@@ -220,7 +223,7 @@ export class JiraTaskSystemAdapter extends TaskSystemAdapter {
 
   constructor({
     site, email, apiToken, projectKey, statusMapping,
-    dependencyLinkType = "Blocks", acSource = "description", acFieldId = null,
+    relationship = null, acSource = "description", acFieldId = null,
     timeoutMs = 15000, transport = defaultJiraTransport, scheme = "https",
   } = {}) {
     super();
@@ -233,7 +236,7 @@ export class JiraTaskSystemAdapter extends TaskSystemAdapter {
     this.#credentials = Object.freeze({ email, apiToken });
     this.projectKey = projectKey;
     this.statusMapping = Object.freeze({ ...statusMapping });
-    this.dependencyLinkType = dependencyLinkType;
+    this.relationship = relationship === null ? null : parseRelationshipConfig(relationship);
     this.acSource = acSource;
     this.acFieldId = acFieldId;
     this.timeoutMs = timeoutMs;
@@ -281,7 +284,7 @@ export class JiraTaskSystemAdapter extends TaskSystemAdapter {
     const seenIds = new Set();
     for (const issue of issues) {
       const { task, metadata: issueMetadata } = mapIssueToTask(issue, {
-        statusMapping: this.statusMapping, dependencyLinkType: this.dependencyLinkType,
+        statusMapping: this.statusMapping, relationship: this.relationship,
         acSource: this.acSource, acFieldId: this.acFieldId, projectKey: this.projectKey, site: this.site,
       });
       if (seenIds.has(task.id)) throw new JiraTaskSourceError(`duplicate Jira issue key ${task.id} in normalized input`, "JIRA_DUPLICATE_ISSUE_KEY");

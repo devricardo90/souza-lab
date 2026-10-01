@@ -1,3 +1,4 @@
+import { SYNTHETIC_BLOCKS_RELATIONSHIP } from "../src/reconcile/jira-relationship.js";
 import assert from "node:assert/strict";
 import test, { after, before, beforeEach } from "node:test";
 import { spawn } from "node:child_process";
@@ -23,7 +24,7 @@ import { buildMaterializationOperations } from "../src/materialize/jira-material
 const MOCK = fileURLToPath(new URL("./helpers/jira-mock-server.js", import.meta.url));
 const WORKER = fileURLToPath(new URL("./helpers/outbox-worker.js", import.meta.url));
 const NOW = "2026-09-30T20:00:00.000Z";
-const CONFIG = { projectKey: "LOOP", issueTypeName: "Task" };
+const CONFIG = { projectKey: "LOOP", issueTypeName: "Task", relationship: SYNTHETIC_BLOCKS_RELATIONSHIP };
 
 let server; let port; let dir; let dbPath; const opened = [];
 before(async () => {
@@ -47,13 +48,13 @@ const remoteIssues = async () => (await (await fetch(`http://127.0.0.1:${port}/r
 
 const openStore = (clock) => { const s = new SqliteOutboxStore({ path: dbPath, ...(clock ? { clock } : {}) }); opened.push(s); return s; };
 const jiraClient = () => new JiraSyncClient({ site: `127.0.0.1:${port}`, scheme: "http", email: "t@example.invalid", apiToken: "create-test-token-0123456789", timeoutMs: 2500 });
-const executor = ({ store = openStore(), workerId = "w-main", clock, ...rest } = {}) => new JiraOutboxExecutor({ store, jira: jiraClient(), workerId, ...(clock ? { clock } : {}), ...rest });
+const executor = ({ store = openStore(), workerId = "w-main", clock, ...rest } = {}) => new JiraOutboxExecutor({ store, jira: jiraClient(), workerId, relationship: SYNTHETIC_BLOCKS_RELATIONSHIP, ...(clock ? { clock } : {}), ...rest });
 const steppingClock = () => { let now = Date.parse(NOW); return { clock: () => new Date(now).toISOString(), advance: (ms) => { now += ms; } }; };
 
 const block = (id, title, extra = "") => `TASK_ID: ${id}\nTITLE: ${title}\n${extra}AC:\n- AC-001: ${title} works\n- AC-002: and is verified\n`;
 const snapshot = (version, ...blocks) => makePlanSnapshot({ documentId: "doc-1", compiled: compilePlan(`LOOP_EXECUTION_PLAN: 1\nPLAN_VERSION: ${version}\n${blocks.join("\n")}\nEND_LOOP_EXECUTION_PLAN\n`), fetchedAt: NOW, compiledAt: NOW });
 const SNAP = snapshot(1, block("RT-1", "Alpha"));
-const observe = () => normalizeJiraObservation(jiraClient().observeProject("LOOP"));
+const observe = () => normalizeJiraObservation(jiraClient().observeProject("LOOP"), { relationship: SYNTHETIC_BLOCKS_RELATIONSHIP });
 const reconcile = (snap = SNAP) => reconcilePlan({ snapshot: snap, observation: observe(), createdAt: NOW });
 const opsFor = (snap = SNAP) => buildMaterializationOperations({ reconciliation: reconcile(snap), config: CONFIG });
 const OP = () => opsFor().operations[0];
@@ -311,4 +312,62 @@ test("CONTROL LOGIC IS DETERMINISTIC: materialization, ADF, reconciler and execu
     const text = readFileSync(new URL(file, import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
     assert.ok(!/anthropic|openai|\bllm\b|claude|Math\.random|fetch\(/i.test(text), `${file} must not call a model`);
   }
+});
+
+// ---------- dependency links (needed so a dependent task can be materialized without dropping its dependency) ----------
+const DEP_SNAP = snapshot(1, block("RT-1", "Alpha"), block("RT-2", "Beta", "DEPENDS_ON: RT-1\n"));
+
+test("dependent task: waits (DEPENDENCY_NOT_MATERIALIZED) until its dependency exists, then is created WITH its dependency link and reconciles to NOOP", async () => {
+  const exec = executor();
+  const first = opsFor(DEP_SNAP);
+  assert.deepEqual([first.operations.map((o) => o.taskId), first.blocked.map((b) => [b.taskId, b.reasonCode])], [["RT-1"], [["RT-2", "DEPENDENCY_NOT_MATERIALIZED"]]]);
+  exec.enqueueMaterialization(first.operations[0]);
+  assert.equal((await exec.process(first.operations[0].operationId)).outcome, "CONFIRMED");
+
+  const second = opsFor(DEP_SNAP);
+  assert.deepEqual(second.operations.map((o) => o.taskId), ["RT-2"]);
+  exec.enqueueMaterialization(second.operations[0]);
+  const result = await exec.process(second.operations[0].operationId);
+  assert.equal(result.outcome, "CONFIRMED", JSON.stringify(result.operation));
+  const issues = await remoteIssues();
+  assert.equal(issues.length, 2);
+  const dependent = issues.find((i) => i.fields.summary === "Beta");
+  const blocker = issues.find((i) => i.fields.summary === "Alpha");
+  assert.deepEqual(dependent.fields.issuelinks, [{ type: { name: "Blocks" }, inwardIssue: { key: blocker.key } }]);
+  const closure = reconcile(DEP_SNAP);
+  assert.deepEqual([closure.noops.map((r) => r.taskId), closure.creates.length, closure.conflicts.length], [["RT-1", "RT-2"], 0, 0]);
+});
+
+test("a crash between the issue create and its dependency link is repaired additively on retry (links only, no second issue)", async () => {
+  const { clock, advance } = steppingClock();
+  const exec = executor({ store: openStore(clock), clock });
+  const [first] = opsFor(DEP_SNAP).operations;
+  exec.enqueueMaterialization(first);
+  await exec.process(first.operationId);
+  const [dependentOp] = opsFor(DEP_SNAP).operations;
+  exec.enqueueMaterialization(dependentOp);
+  await override({ method: "POST", pathIncludes: "/issueLink", fault: "reset" });
+  const interrupted = await exec.process(dependentOp.operationId);
+  assert.equal(interrupted.outcome, "RETRY_WAIT");
+  assert.equal((await remoteIssues()).length, 2, "the dependent issue exists but has no link yet");
+  advance(10 * 60_000);
+  const repaired = await exec.process(dependentOp.operationId);
+  assert.equal(repaired.outcome, "CONFIRMED", JSON.stringify(repaired.operation));
+  assert.equal((await remoteIssues()).length, 2, "no second issue");
+  assert.equal(await createPosts(), 2, "exactly one create per task");
+  assert.equal(reconcile(DEP_SNAP).noops.length, 2);
+});
+
+test("a dependency that is not uniquely materialized at write time fails closed (CONFLICT DEPENDENCY_UNRESOLVED) before any create", async () => {
+  const exec = executor();
+  const [first] = opsFor(DEP_SNAP).operations;
+  exec.enqueueMaterialization(first);
+  await exec.process(first.operationId);
+  const [dependentOp] = opsFor(DEP_SNAP).operations;
+  exec.enqueueMaterialization(dependentOp);
+  await control({ seedIssue: loopMarkedIssue("LOOP-900", DEP_SNAP, "RT-1") }); // RT-1 is now owned twice
+  const result = await exec.process(dependentOp.operationId);
+  assert.equal(result.outcome, "CONFLICT");
+  assert.ok(["DEPENDENCY_UNRESOLVED", "DUPLICATE_TASK_ID_REMOTE"].includes(result.operation.lastErrorCode));
+  assert.equal(await createPosts(), 1, "the dependent issue was never created");
 });

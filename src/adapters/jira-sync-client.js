@@ -1,3 +1,4 @@
+import { blockerOf, linkBody, parseRelationshipConfig, verifyAgainstLinkTypes } from "../reconcile/jira-relationship.js";
 import { annotateError, classifyJiraFacts, isFacts, jiraCurlTransport, redact } from "./jira-transport.js";
 
 /**
@@ -133,6 +134,33 @@ export class JiraSyncClient {
       return { id: created.id ?? null, key: created.key };
     });
   }
+
+  /** Read-only: Jira's own link type definitions (id, name, inward/outward descriptions). */
+  listLinkTypes() {
+    const response = this.request("issueLinkType");
+    if (!response || !Array.isArray(response.issueLinkTypes)) throw new JiraSyncError("Jira link types response has an unexpected schema", "INVALID_RESPONSE", "EXTERNAL_BLOCK");
+    return response.issueLinkTypes;
+  }
+
+  /** Fails closed (RELATIONSHIP_CONFIG_INVALID) unless the explicit relationship configuration matches Jira's link type. */
+  verifyRelationship(relationship) {
+    return verifyAgainstLinkTypes(relationship, this.listLinkTypes());
+  }
+
+  /**
+   * Creates the dependency link "dependent depends on blocker" using ONLY the explicit relationship configuration
+   * (no implicit direction). Additive; callers reconcile before and verify after.
+   */
+  async linkIssues({ blockerKey, dependentKey, relationship }, context) {
+    const body = linkBody(parseRelationshipConfig(relationship), { blockerKey, dependentKey }); // throws RELATIONSHIP_CONFIG_INVALID before any request
+    if (typeof context?.assertLeaseCurrent !== "function") throw new JiraSyncError("active execution lease is required to write to Jira", "LEASE_REQUIRED", "INVARIANT_VIOLATION");
+    await context.assertLeaseCurrent();
+    this.request("issueLink", { method: "POST", body });
+    return { blockerKey, dependentKey };
+  }
+
+  /** The blocker issue key on a dependent issue's link entry per the explicit mapping (null if not this relation). */
+  static blockerOf(relationship, entry) { return blockerOf(relationship, entry); }
 
   listComments(issueKey) {
     const response = this.request(`issue/${encodeURIComponent(issueKey)}/comment?maxResults=200`);

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { parseRelationshipConfig } from "../reconcile/jira-relationship.js";
 
 /**
  * Materialization layer (CP-04B): converts APPROVED reconciliation decisions into outbox
@@ -49,25 +50,49 @@ export function jiraCreateOperationId({ projectKey, documentId, taskId }) {
   return `JIRA_CREATE:${digest}`;
 }
 
-export const BLOCKED_REASONS = Object.freeze(["RELATIONSHIPS_NOT_SUPPORTED"]);
+export const BLOCKED_REASONS = Object.freeze(["RELATIONSHIPS_NOT_SUPPORTED", "DEPENDENCY_NOT_MATERIALIZED", "RELATIONSHIP_CONFIG_INVALID"]);
 
 /**
  * @returns {{ operations: object[], blocked: object[] }} operation specs are ready for outbox.enqueue().
- * A CREATE that needs an Epic link or dependency links is BLOCKED (never created with the relationship
- * silently dropped): creating/resolving those Jira relationships is not implemented in this phase.
+ * A CREATE is BLOCKED (never created with a relationship silently dropped) when it
+ *   - needs an Epic link (Epic creation/linking is not implemented): RELATIONSHIPS_NOT_SUPPORTED, or
+ *   - depends on a task that is not yet confirmed materialized in THIS reconciliation (NOOP):
+ *     DEPENDENCY_NOT_MATERIALIZED. It is simply retried on a later reconciliation, after the
+ *     dependency exists, so the dependency link can be created together with the issue.
  */
 export function buildMaterializationOperations({ reconciliation, config }) {
   const { projectKey, issueTypeName } = parseMaterializationConfig(config);
+  let relationshipValid = true;
+  let relationshipProblem = null;
+  try { parseRelationshipConfig(config.relationship); } catch (error) { relationshipValid = false; relationshipProblem = error.message; }
   if (!reconciliation || !Array.isArray(reconciliation.creates)) throw new TypeError("a reconciliation result is required");
   const operations = [];
   const blocked = [];
+  const materialized = new Set((reconciliation.noops ?? []).map((decision) => decision.taskId));
   for (const decision of reconciliation.creates) {
     if (decision.decision !== "CREATE" || !decision.proposedMaterialization) continue;
     const payload = decision.proposedMaterialization;
-    if (payload.epicId !== null || payload.dependsOn.length > 0) {
+    const pending = payload.dependsOn.filter((id) => !materialized.has(id));
+    if (payload.epicId !== null) {
       blocked.push({
         taskId: decision.taskId, reasonCode: "RELATIONSHIPS_NOT_SUPPORTED",
-        detail: `task needs ${payload.epicId !== null ? "an Epic link" : ""}${payload.epicId !== null && payload.dependsOn.length > 0 ? " and " : ""}${payload.dependsOn.length > 0 ? `dependency links (${payload.dependsOn.join(", ")})` : ""}; relationship creation is not implemented`,
+        detail: `task needs an Epic link (${payload.epicId})${payload.dependsOn.length > 0 ? ` and dependency links (${payload.dependsOn.join(", ")})` : ""}; Epic creation/linking is not implemented`,
+        planVersion: decision.planVersion, snapshotContentHash: decision.snapshotContentHash,
+      });
+      continue;
+    }
+    if (payload.dependsOn.length > 0 && !relationshipValid) {
+      // never create a dependent issue whose dependency link cannot be expressed unambiguously
+      blocked.push({
+        taskId: decision.taskId, reasonCode: "RELATIONSHIP_CONFIG_INVALID", detail: relationshipProblem,
+        planVersion: decision.planVersion, snapshotContentHash: decision.snapshotContentHash,
+      });
+      continue;
+    }
+    if (pending.length > 0) {
+      blocked.push({
+        taskId: decision.taskId, reasonCode: "DEPENDENCY_NOT_MATERIALIZED",
+        detail: `dependencies not yet materialized in Jira: ${pending.join(", ")}`,
         planVersion: decision.planVersion, snapshotContentHash: decision.snapshotContentHash,
       });
       continue;

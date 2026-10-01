@@ -3,6 +3,7 @@ import { executionMarker } from "./jira-sync-client.js";
 import { OutboxError, deriveOperationId } from "./sqlite-outbox-store.js";
 import { encodeLoopDescription } from "../reconcile/jira-adf.js";
 import { normalizeJiraObservation } from "../reconcile/jira-observation.js";
+import { parseRelationshipConfig } from "../reconcile/jira-relationship.js";
 import { reconcilePlan } from "../reconcile/plan-reconciler.js";
 import { parseMaterializationConfig } from "../materialize/jira-materialization.js";
 
@@ -50,33 +51,60 @@ export function jiraTransitionOperation({ issueKey, executionId, doneStatusName,
 }
 
 /** Builds the single-task desired snapshot a JIRA_CREATE operation was approved against. */
-function createView(op, clock, jira) {
+function createView(op, clock, jira, relationship) {
   const config = parseMaterializationConfig(op.desiredState); // CONFIG_INVALID fails closed before any remote call
   const m = op.desiredState.materialization;
   const snapshot = {
     documentId: m.sourceDocumentId, planVersion: m.planVersion, contentHash: m.snapshotContentHash,
     tasks: [{ taskId: m.taskId, title: m.title, epicId: m.epicId, dependsOn: m.dependsOn, acceptanceCriteria: m.acceptanceCriteria, taskHash: m.taskHash }],
   };
+  const observe = () => normalizeJiraObservation(jira.observeProject(config.projectKey), { relationship });
   const decide = () => {
-    const observation = normalizeJiraObservation(jira.observeProject(config.projectKey));
-    const result = reconcilePlan({ snapshot, observation, createdAt: clock() });
+    const result = reconcilePlan({ snapshot, observation: observe(), createdAt: clock() });
     return [...result.creates, ...result.noops, ...result.conflicts][0];
   };
-  return { config, m, decide };
+  return { config, m, decide, observe };
 }
 
-function handlers(jira, clock) {
+function handlers(jira, clock, relationship) {
   return {
     JIRA_CREATE: {
       reconcile(op) {
-        const record = createView(op, clock, jira).decide();
+        const record = createView(op, clock, jira, relationship).decide();
         if (record.decision === "CREATE") return { state: "NOT_APPLIED" };
         if (record.decision === "NOOP") return { state: "APPLIED", issueKey: record.jiraIssueKey };
+        // Additive repair: the issue was materialized by THIS operation (audit metadata matches) and only its
+        // plan-owned dependency links are missing (e.g. a crash between the create and the link calls).
+        const onlyMissingLinks = record.jiraIssueKey && record.differences.length > 0
+          && record.differences.every((d) => d.field === "dependencies" && d.kind === "MISSING");
+        if (onlyMissingLinks) {
+          const owner = createView(op, clock, jira, relationship).observe().issues.find((issue) => issue.jiraIssueKey === record.jiraIssueKey);
+          if (owner?.materialization?.taskHash === op.desiredState.materialization.taskHash) {
+            return { state: "NOT_APPLIED", repair: { issueKey: record.jiraIssueKey, missing: record.differences.map((d) => d.key) } };
+          }
+        }
         return { state: "CONFLICT", code: record.reasonCode, detail: `${record.reasonCode}${record.jiraIssueKeys ? ` (${record.jiraIssueKeys.join(", ")})` : record.jiraIssueKey ? ` (${record.jiraIssueKey})` : ""}` };
       },
-      async write(op, context) {
-        const { config, m, decide } = createView(op, clock, jira);
-        await jira.createIssue({ projectKey: config.projectKey, issueTypeName: config.issueTypeName, summary: m.title, description: encodeLoopDescription(m) }, context);
+      async write(op, context, remote = {}) {
+        const { config, m, decide, observe } = createView(op, clock, jira, relationship);
+        // Dependency links need the explicit relationship mapping. Without it NOTHING is created (fail closed).
+        if (m.dependsOn.length > 0 || remote.repair) parseRelationshipConfig(relationship);
+        // Resolve dependency issue keys from the TASK_ID markers BEFORE any write; unresolvable => conflict, nothing created.
+        const owners = new Map();
+        for (const issue of observe().issues) if (issue.taskIdMarker) owners.set(issue.taskIdMarker, [...(owners.get(issue.taskIdMarker) ?? []), issue.jiraIssueKey]);
+        const wanted = remote.repair ? remote.repair.missing : m.dependsOn;
+        const blockerKeys = [];
+        for (const taskId of wanted) {
+          const keys = owners.get(taskId) ?? [];
+          if (keys.length !== 1) return { result: "CONFLICT", code: "DEPENDENCY_UNRESOLVED", detail: `dependency ${taskId} is owned by ${keys.length} Jira issues` };
+          blockerKeys.push(keys[0]);
+        }
+        let dependentKey = remote.repair?.issueKey;
+        if (!dependentKey) {
+          const created = await jira.createIssue({ projectKey: config.projectKey, issueTypeName: config.issueTypeName, summary: m.title, description: encodeLoopDescription(m) }, context);
+          dependentKey = created.key;
+        }
+        for (const blockerKey of blockerKeys) await jira.linkIssues({ blockerKey, dependentKey, relationship }, context);
         // read-after-write: exactly one issue with this LOOP_TASK_ID and a matching plan-owned definition
         const record = decide();
         if (record.decision === "NOOP") return { result: "CONFIRMED", issueKey: record.jiraIssueKey };
@@ -118,11 +146,12 @@ export class JiraOutboxExecutor {
    * faultPoints: test-only hooks {afterClaim, afterReconcile, beforeRemoteWrite, afterRemoteWrite}
    * used by the real-process crash tests; they are no-ops in production.
    */
-  constructor({ store, jira, workerId, claimTtlMs = 120000, retryPolicy = new RuntimeRetryPolicy(), clock = () => new Date().toISOString(), faultPoints = {} } = {}) {
+  constructor({ store, jira, workerId, claimTtlMs = 120000, retryPolicy = new RuntimeRetryPolicy(), clock = () => new Date().toISOString(), faultPoints = {}, relationship = null } = {}) {
     if (!store || !jira) throw new TypeError("JiraOutboxExecutor requires a store and a JiraSyncClient");
+    if (relationship !== null) relationship = parseRelationshipConfig(relationship); // explicit mapping, validated up front (RELATIONSHIP_CONFIG_INVALID)
     if (typeof workerId !== "string" || workerId.trim() === "") throw new TypeError("workerId is required");
     Object.assign(this, { store, jira, workerId, claimTtlMs, retryPolicy, clock, faultPoints });
-    this.handlers = handlers(jira, clock);
+    this.handlers = handlers(jira, clock, relationship);
   }
 
   enqueueComment(input) { return this.store.enqueue(jiraCommentOperation(input)); }
@@ -160,7 +189,7 @@ export class JiraOutboxExecutor {
       if (remote.state === "CONFLICT") return settle("CONFLICT", { errorCode: remote.code ?? "STALE_STATE", errorDetail: remote.detail });
       await context.assertLeaseCurrent();
       await this.fault("beforeRemoteWrite", op);
-      const written = await handler.write(op, context);
+      const written = await handler.write(op, context, remote);
       await this.fault("afterRemoteWrite", { op, written });
       if (written.result === "CONFIRMED") return settle("CONFIRMED");
       if (written.result === "CONFLICT") return settle("CONFLICT", { errorCode: written.code ?? "STALE_STATE", errorDetail: written.detail });

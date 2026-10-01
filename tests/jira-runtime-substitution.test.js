@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { JiraTaskSystemAdapter } from "../src/adapters/jira-task-adapter.js";
+import { SYNTHETIC_BLOCKS_RELATIONSHIP } from "../src/reconcile/jira-relationship.js";
 import { RecoveryCoordinator } from "../src/core/recovery-coordinator.js";
 import { RuntimeObserver } from "../src/core/runtime-observer.js";
 import { LoopRuntime } from "../src/core/loop-runtime.js";
@@ -60,7 +61,7 @@ class JiraFixture {
 function buildRuntime(root, jiraFixture) {
   const jira = new JiraTaskSystemAdapter({
     site: SITE, email: "loop@example.invalid", apiToken: "token", projectKey: PROJECT,
-    statusMapping: STATUS_MAPPING, transport: jiraFixture.transport,
+    statusMapping: STATUS_MAPPING, relationship: SYNTHETIC_BLOCKS_RELATIONSHIP, transport: jiraFixture.transport,
   });
   const state = { revision: null, ci: null, validation: null, review: null, merge: null, postMergeValidation: null, completed: false, calls: [] };
   const gitProvider = { getRevision: () => state.revision };

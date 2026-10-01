@@ -9,10 +9,10 @@ import http from "node:http";
  * response for the next request matching {method, pathIncludes};
  * POST /__reset; GET /__log.
  */
-const state = { status: "In Progress", comments: [], nextCommentId: 10001, overrides: [], log: [], postNoop: false, issues: [], nextIssueNumber: 100, legacySearch: true, createTweak: null };
+const state = { status: "In Progress", comments: [], nextCommentId: 10001, overrides: [], log: [], postNoop: false, issues: [], nextIssueNumber: 100, legacySearch: true, createTweak: null, linkTypes: [{ id: "10000", name: "Blocks", inward: "is blocked by", outward: "blocks" }] };
 
 function reset() {
-  Object.assign(state, { status: "In Progress", comments: [], nextCommentId: 10001, overrides: [], log: [], postNoop: false, issues: [], nextIssueNumber: 100, legacySearch: true, createTweak: null });
+  Object.assign(state, { status: "In Progress", comments: [], nextCommentId: 10001, overrides: [], log: [], postNoop: false, issues: [], nextIssueNumber: 100, legacySearch: true, createTweak: null, linkTypes: [{ id: "10000", name: "Blocks", inward: "is blocked by", outward: "blocks" }] });
 }
 
 /** Applies a create-issue write (used by the normal route and by the "applied, then response lost" fault). */
@@ -41,6 +41,8 @@ const server = http.createServer((req, res) => {
       if (body.reset) reset();
       if (body.postNoop !== undefined) state.postNoop = body.postNoop;
       if (body.setStatus !== undefined) state.status = body.setStatus;
+      if (body.clearOverrides) state.overrides = [];
+      if (body.setLinkTypes) state.linkTypes = body.setLinkTypes;
       if (body.legacySearch !== undefined) state.legacySearch = body.legacySearch;
       if (body.createTweak !== undefined) state.createTweak = body.createTweak; // make created issues deviate from what was requested
       if (body.seedIssue) { state.issues.push(body.seedIssue); }
@@ -82,12 +84,30 @@ const server = http.createServer((req, res) => {
       return json(res, 201, created);
     }
     if (transitions && req.method === "GET") return json(res, 200, { transitions: [{ id: "31", name: "Done" }] });
+    const stored = (key) => state.issues.find((candidate) => candidate.key === key);
+    // Link semantics follow Jira's rendering rule: on an issue, an entry lists the OTHER issue under the key
+    // named after this issue's own end of the link ("X is blocked by Y": X is the inward end, X's entry shows
+    // inwardIssue: Y; Y's entry shows outwardIssue: X). Both-sided so reversed configurations are really detectable.
+    if (p === "/rest/api/3/issueLinkType" && req.method === "GET") return json(res, 200, { issueLinkTypes: state.linkTypes });
+    if (p === "/rest/api/3/issueLink" && req.method === "POST") {
+      const body = JSON.parse(raw);
+      const inward = stored(body.inwardIssue?.key);
+      const outward = stored(body.outwardIssue?.key);
+      if (!inward || !outward) return json(res, 404, { errorMessages: ["issue not found"] });
+      if (!state.linkTypes.some((t) => t.name === body.type?.name)) return json(res, 400, { errorMessages: ["unknown link type"] });
+      inward.fields.issuelinks.push({ type: { name: body.type.name }, inwardIssue: { key: outward.key } });
+      outward.fields.issuelinks.push({ type: { name: body.type.name }, outwardIssue: { key: inward.key } });
+      res.writeHead(201);
+      return res.end();
+    }
     if (transitions && req.method === "POST") {
-      if (!state.postNoop) state.status = "Done";
+      const target = stored(transitions[1]);
+      if (target) { if (!state.postNoop) target.fields.status = { name: "Done" }; }
+      else if (!state.postNoop) state.status = "Done";
       res.writeHead(204);
       return res.end();
     }
-    if (issue && req.method === "GET") return json(res, 200, { key: issue[1], fields: { status: { name: state.status } } });
+    if (issue && req.method === "GET") return json(res, 200, { key: issue[1], fields: { status: stored(issue[1])?.fields.status ?? { name: state.status } } });
     if (p === "/rest/api/3/search") {
       const description = "Acceptance Criteria\n\n- AC-001: mock condition\n";
       const legacy = state.legacySearch ? [{ key: "LOOP-1", fields: { summary: "Mock", status: { name: state.status }, description, issuelinks: [] } }] : [];

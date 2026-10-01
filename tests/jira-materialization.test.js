@@ -1,3 +1,4 @@
+import { SYNTHETIC_BLOCKS_RELATIONSHIP } from "../src/reconcile/jira-relationship.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
@@ -13,7 +14,7 @@ const NOW = "2026-09-30T19:00:00.000Z";
 const CONFIG = { projectKey: "LOOP", issueTypeName: "Task" };
 const block = (id, title, extra = "") => `TASK_ID: ${id}\nTITLE: ${title}\n${extra}AC:\n- AC-001: ${title} works\n`;
 const snapshot = (version, ...blocks) => makePlanSnapshot({ documentId: "doc-1", compiled: compilePlan(`LOOP_EXECUTION_PLAN: 1\nPLAN_VERSION: ${version}\n${blocks.join("\n")}\nEND_LOOP_EXECUTION_PLAN\n`), fetchedAt: NOW, compiledAt: NOW });
-const decide = (snap, raw = []) => reconcilePlan({ snapshot: snap, observation: normalizeJiraObservation(raw), createdAt: NOW });
+const decide = (snap, raw = []) => reconcilePlan({ snapshot: snap, observation: normalizeJiraObservation(raw, { relationship: SYNTHETIC_BLOCKS_RELATIONSHIP }), createdAt: NOW });
 const loopIssue = (snap, taskId, key) => {
   const task = snap.tasks.find((t) => t.taskId === taskId);
   return { key, fields: { summary: task.title, status: { name: "To Do" }, issuelinks: [], description: encodeLoopDescription({ taskId, sourceDocumentId: snap.documentId, planVersion: snap.planVersion, snapshotContentHash: snap.contentHash, taskHash: task.taskHash, acceptanceCriteria: task.acceptanceCriteria }) } };
@@ -21,7 +22,7 @@ const loopIssue = (snap, taskId, key) => {
 
 test("CREATE decision -> one deterministic JIRA_CREATE operation spec carrying the proposed materialization", () => {
   const snap = snapshot(1, block("RT-1", "Alpha"));
-  const { operations, blocked } = buildMaterializationOperations({ reconciliation: decide(snap), config: CONFIG });
+  const { operations, blocked } = buildMaterializationOperations({ reconciliation: decide(snap), config: { ...CONFIG, relationship: SYNTHETIC_BLOCKS_RELATIONSHIP } });
   assert.equal(blocked.length, 0);
   assert.equal(operations.length, 1);
   const [op] = operations;
@@ -33,12 +34,12 @@ test("CREATE decision -> one deterministic JIRA_CREATE operation spec carrying t
 });
 
 test("operation_id is deterministic and independent of title, Jira key, ordering, plan version, task hash and randomness", () => {
-  const a = buildMaterializationOperations({ reconciliation: decide(snapshot(1, block("RT-2", "B"), block("RT-1", "A"))), config: CONFIG });
-  const b = buildMaterializationOperations({ reconciliation: decide(snapshot(1, block("RT-1", "A"), block("RT-2", "B"))), config: CONFIG });
+  const a = buildMaterializationOperations({ reconciliation: decide(snapshot(1, block("RT-2", "B"), block("RT-1", "A"))), config: { ...CONFIG, relationship: SYNTHETIC_BLOCKS_RELATIONSHIP } });
+  const b = buildMaterializationOperations({ reconciliation: decide(snapshot(1, block("RT-1", "A"), block("RT-2", "B"))), config: { ...CONFIG, relationship: SYNTHETIC_BLOCKS_RELATIONSHIP } });
   assert.deepEqual(a.operations.map((o) => o.operationId), b.operations.map((o) => o.operationId));
   assert.deepEqual(a.operations.map((o) => o.taskId), ["RT-1", "RT-2"]);
   assert.equal(JSON.stringify(a.operations), JSON.stringify(b.operations));
-  const renamedV2 = buildMaterializationOperations({ reconciliation: decide(snapshot(2, block("RT-1", "A renamed"), block("RT-2", "B"))), config: CONFIG });
+  const renamedV2 = buildMaterializationOperations({ reconciliation: decide(snapshot(2, block("RT-1", "A renamed"), block("RT-2", "B"))), config: { ...CONFIG, relationship: SYNTHETIC_BLOCKS_RELATIONSHIP } });
   assert.equal(renamedV2.operations[0].operationId, a.operations[0].operationId, "one TASK_ID has one materialization identity");
   assert.notEqual(jiraCreateOperationId({ projectKey: "LOOP", documentId: "doc-1", taskId: "RT-1" }), jiraCreateOperationId({ projectKey: "OTHR", documentId: "doc-1", taskId: "RT-1" }));
   assert.notEqual(jiraCreateOperationId({ projectKey: "LOOP", documentId: "doc-1", taskId: "RT-1" }), jiraCreateOperationId({ projectKey: "LOOP", documentId: "doc-2", taskId: "RT-1" }));
@@ -48,10 +49,10 @@ test("operation_id is deterministic and independent of title, Jira key, ordering
 test("duplicate enqueue of the same logical materialization is ONE outbox operation; a changed payload is rejected, not duplicated", () => {
   const store = new SqliteOutboxStore({ path: ":memory:", clock: () => NOW });
   try {
-    const [op] = buildMaterializationOperations({ reconciliation: decide(snapshot(1, block("RT-1", "Alpha"))), config: CONFIG }).operations;
+    const [op] = buildMaterializationOperations({ reconciliation: decide(snapshot(1, block("RT-1", "Alpha"))), config: { ...CONFIG, relationship: SYNTHETIC_BLOCKS_RELATIONSHIP } }).operations;
     assert.deepEqual([store.enqueue(op).created, store.enqueue(op).created, store.enqueue({ ...op }).created], [true, false, false]);
     assert.equal(store.list().length, 1);
-    const [changed] = buildMaterializationOperations({ reconciliation: decide(snapshot(2, block("RT-1", "Alpha reworded"))), config: CONFIG }).operations;
+    const [changed] = buildMaterializationOperations({ reconciliation: decide(snapshot(2, block("RT-1", "Alpha reworded"))), config: { ...CONFIG, relationship: SYNTHETIC_BLOCKS_RELATIONSHIP } }).operations;
     assert.equal(changed.operationId, op.operationId);
     assert.throws(() => store.enqueue(changed), { code: "OPERATION_ID_CONFLICT" });
     assert.equal(store.list().length, 1);
@@ -69,16 +70,22 @@ test("only CREATE decisions become operations: NOOP, CONFLICT and remoteOnly nev
   const reconciliation = decide(snap, raw);
   assert.deepEqual([reconciliation.creates.map((r) => r.taskId), reconciliation.noops.map((r) => r.taskId), reconciliation.conflicts.map((r) => [r.taskId, r.reasonCode]), reconciliation.remoteOnly.length],
     [["RT-3"], ["RT-1"], [["RT-2", "TITLE_DRIFT"], ["RT-4", "POTENTIAL_REMOTE_COLLISION"]], 2]);
-  const { operations } = buildMaterializationOperations({ reconciliation, config: CONFIG });
+  const { operations } = buildMaterializationOperations({ reconciliation, config: { ...CONFIG, relationship: SYNTHETIC_BLOCKS_RELATIONSHIP } });
   assert.deepEqual(operations.map((o) => o.taskId), ["RT-3"]);
 });
 
-test("CREATE needing an Epic or dependency link is BLOCKED (relationship never silently dropped, never invented)", () => {
+test("CREATE needing an Epic link is BLOCKED; a dependent CREATE waits until its dependencies are materialized (never created with a dropped relationship)", () => {
   const snap = snapshot(1, block("RT-1", "Plain"), block("RT-2", "Linked", "DEPENDS_ON: RT-1\n"), block("RT-3", "Epic child", "EPIC_ID: RT-E4\n"), block("RT-4", "Both", "EPIC_ID: RT-E4\nDEPENDS_ON: RT-1\n"));
-  const { operations, blocked } = buildMaterializationOperations({ reconciliation: decide(snap), config: CONFIG });
-  assert.deepEqual(operations.map((o) => o.taskId), ["RT-1"]);
-  assert.deepEqual(blocked.map((b) => [b.taskId, b.reasonCode]), [["RT-2", "RELATIONSHIPS_NOT_SUPPORTED"], ["RT-3", "RELATIONSHIPS_NOT_SUPPORTED"], ["RT-4", "RELATIONSHIPS_NOT_SUPPORTED"]]);
-  assert.match(blocked[2].detail, /Epic link and dependency links \(RT-1\)/);
+  const first = buildMaterializationOperations({ reconciliation: decide(snap), config: { ...CONFIG, relationship: SYNTHETIC_BLOCKS_RELATIONSHIP } });
+  assert.deepEqual(first.operations.map((o) => o.taskId), ["RT-1"]);
+  assert.deepEqual(first.blocked.map((b) => [b.taskId, b.reasonCode]), [["RT-2", "DEPENDENCY_NOT_MATERIALIZED"], ["RT-3", "RELATIONSHIPS_NOT_SUPPORTED"], ["RT-4", "RELATIONSHIPS_NOT_SUPPORTED"]]);
+  assert.match(first.blocked[0].detail, /RT-1/);
+  assert.match(first.blocked[2].detail, /Epic link \(RT-E4\) and dependency links \(RT-1\)/);
+  // once RT-1 exists in Jira, the dependent task becomes creatable; the Epic tasks stay blocked
+  const second = buildMaterializationOperations({ reconciliation: decide(snap, [loopIssue(snap, "RT-1", "LOOP-1")]), config: { ...CONFIG, relationship: SYNTHETIC_BLOCKS_RELATIONSHIP } });
+  assert.deepEqual(second.operations.map((o) => o.taskId), ["RT-2"]);
+  assert.deepEqual(second.operations[0].desiredState.materialization.dependsOn, ["RT-1"]);
+  assert.deepEqual(second.blocked.map((b) => b.taskId), ["RT-3", "RT-4"]);
 });
 
 test("missing or invalid project configuration fails closed with CONFIG_INVALID", () => {
@@ -92,6 +99,6 @@ test("missing or invalid project configuration fails closed with CONFIG_INVALID"
 
 test("the materialization layer is pure: no I/O, store, network, clock, randomness or model reference", () => {
   const text = readFileSync(new URL("../src/materialize/jira-materialization.js", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
-  assert.deepEqual([...text.matchAll(/^import .* from "([^"]+)"/gm)].map((m) => m[1]), ["node:crypto"]);
+  assert.deepEqual([...text.matchAll(/^import .* from "([^"]+)"/gm)].map((m) => m[1]), ["node:crypto", "../reconcile/jira-relationship.js"]);
   assert.ok(!/Date\.now|new Date\(|Math\.random|fetch\(|process\.|anthropic|openai|\bllm\b|claude|sqlite|outbox/i.test(text));
 });
