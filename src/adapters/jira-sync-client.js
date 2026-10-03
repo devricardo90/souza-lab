@@ -155,7 +155,13 @@ export class JiraSyncClient {
       startAt += page.issues.length;
       if (page.issues.length === 0 || startAt >= Number(page.total ?? issues.length)) break;
     }
-    return issues.filter((issue) => typeof issue?.key === "string" && issue.key.startsWith(`${projectKey}-`)); // defence in depth: never observe foreign-project issues
+    // The board endpoint is used ONLY to enumerate candidate keys: its `description` is a rendered string, not canonical ADF.
+    const keys = issues.filter((issue) => typeof issue?.key === "string" && issue.key.startsWith(`${projectKey}-`)).map((issue) => issue.key); // defence in depth: never observe foreign-project issues
+    return keys.map((key) => {
+      const canonical = this.request(`issue/${encodeURIComponent(key)}?fields=${fields}`);
+      if (canonical?.key !== key || !canonical.fields || typeof canonical.fields !== "object") throw new JiraSyncError(`${key}: canonical issue response has an unexpected schema`, "INVALID_RESPONSE", "EXTERNAL_BLOCK");
+      return canonical;
+    });
   }
 
   /** Raw create. NOT idempotent by itself: callers (the outbox) reconcile before and verify after. */
@@ -265,6 +271,23 @@ export class JiraSyncClient {
     this.assertWritable(blockerKey); this.assertWritable(dependentKey);
     this.request("issueLink", { method: "POST", body });
     return { blockerKey, dependentKey };
+  }
+
+  /**
+   * Corrective removal of ONE issue link (CP-08 repair of a wrongly-directed link). Guarded: both ends must be writable
+   * (project + Loop ownership), and the link id must be present on `issueKey` as exactly the expected type pointing at
+   * `otherKey`; otherwise nothing is deleted. Issues are never deleted.
+   */
+  async removeIssueLink({ linkId, issueKey, otherKey, typeName }, context) {
+    if (typeof context?.assertLeaseCurrent !== "function") throw new JiraSyncError("active execution lease is required to write to Jira", "LEASE_REQUIRED", "INVARIANT_VIOLATION");
+    await context.assertLeaseCurrent();
+    this.assertWritable(issueKey); this.assertWritable(otherKey);
+    const links = this.getIssue(issueKey, "issuelinks")?.fields?.issuelinks;
+    const entry = Array.isArray(links) ? links.find((link) => String(link?.id) === String(linkId)) : null;
+    const target = entry?.inwardIssue?.key ?? entry?.outwardIssue?.key;
+    if (!entry || entry.type?.name !== typeName || target !== otherKey) throw new JiraSyncError(`link ${linkId} is not a ${typeName} link between ${issueKey} and ${otherKey}; nothing removed`, "WRITE_GUARD_VIOLATION", "INVARIANT_VIOLATION");
+    this.request(`issueLink/${encodeURIComponent(String(linkId))}`, { method: "DELETE" });
+    return { linkId: String(linkId), issueKey, otherKey };
   }
 
   /** The blocker issue key on a dependent issue's link entry per the explicit mapping (null if not this relation). */

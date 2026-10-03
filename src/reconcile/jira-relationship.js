@@ -8,18 +8,21 @@
  *   linkTypeName   the Jira issue link type (e.g. "Blocks")
  *   inwardLabel    the type's inward description  (e.g. "is blocked by")
  *   outwardLabel   the type's outward description (e.g. "blocks")
- *   dependentEnd   "inward" | "outward": the end of a link occupied by the DEPENDENT issue
- *                  (for "Blocks": the issue that "is blocked by" the other occupies the inward end)
+ *   dependentEnd   "inward" | "outward": the end of the POST /issueLink body occupied by the DEPENDENT issue.
+ *                  LIVE-PROVEN (CP-08, run CP08MUS8I9PM, Jira Cloud scoped gateway): for "Blocks" the dependent is
+ *                  POSTed as `outwardIssue` and the blocker as `inwardIssue`; Jira then renders the dependent's entry as
+ *                  `inwardIssue: <blocker>` ("is blocked by") and the blocker's entry as `outwardIssue: <dependent>` ("blocks").
  *
  * From that single definition both directions are derived, so write, read, normalization and
  * reconciliation can never disagree:
  *   write: POST issueLink with the dependent at `dependentEnd` and the blocker at the opposite end
- *   read:  on the DEPENDENT issue, a link entry lists the blocker under the key named after the dependent's
- *          own end (`<dependentEnd>Issue`) - the same key Jira uses to render "<label> <other issue>"
+ *   read:  Jira lists, on each linked issue, the OTHER issue under the key of the OTHER issue's own POST end. So on the
+ *          DEPENDENT issue the blocker appears under the key of the end opposite to `dependentEnd`
+ *          (live: POST inward=X, outward=Y => X's entry shows `outwardIssue: Y`, Y's entry shows `inwardIssue: X`).
  * The labels are not used for logic; they are verified against Jira's own link-type definition
  * (verifyAgainstLinkTypes) so a configuration that does not match the Jira instance fails closed.
- * The direction convention itself is UNPROVEN against real Jira until that verification and a live
- * check have been run; nothing is assumed implicitly.
+ * The direction convention was first hypothesised the other way round and DISPROVEN by the CP-08 live dependency
+ * stage; the live-observed behaviour above is the source of truth.
  */
 
 export class RelationshipConfigError extends Error {
@@ -70,7 +73,7 @@ export function blockerOf(relationship, entry) {
   const config = parseRelationshipConfig(relationship);
   const type = entry?.type;
   if (!type || (type.name !== config.linkTypeName && !(config.linkTypeId && String(type.id) === config.linkTypeId))) return null;
-  const key = entry?.[`${config.dependentEnd}Issue`]?.key;
+  const key = entry?.[`${otherEnd(config.dependentEnd)}Issue`]?.key;
   return typeof key === "string" && key !== "" ? key : null;
 }
 
@@ -88,7 +91,7 @@ export function verifyAgainstLinkTypes(relationship, linkTypes) {
   return config;
 }
 
-/** Synthetic configuration for tests only: the classic "Blocks" link type, dependent on the inward end. */
+/** The classic "Blocks" link type with the live-proven mapping (dependent is the POSTed outwardIssue). Also the test configuration. */
 export const SYNTHETIC_BLOCKS_RELATIONSHIP = Object.freeze({
-  linkTypeName: "Blocks", inwardLabel: "is blocked by", outwardLabel: "blocks", dependentEnd: "inward",
+  linkTypeName: "Blocks", inwardLabel: "is blocked by", outwardLabel: "blocks", dependentEnd: "outward",
 });

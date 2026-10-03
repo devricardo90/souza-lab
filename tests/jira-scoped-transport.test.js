@@ -51,7 +51,11 @@ test("client: scoped needs a cloud id, passes mode/api to the transport and expo
 
 test("board observation: proves the board belongs to the project and drops foreign keys", () => {
   const issue = (key) => ({ key, fields: {} });
-  const transport = (r) => (r.path === "board/199" ? facts({ location: { projectKey: "LOOP" } }) : facts({ issues: [issue("LOOP-1"), issue("RCC-9")], total: 2 }));
+  const transport = (r) => {
+    if (r.path === "board/199") return facts({ location: { projectKey: "LOOP" } });
+    if (r.path.startsWith("board/199/issue")) return facts({ issues: [issue("LOOP-1"), issue("RCC-9")], total: 2 });
+    return facts(issue(/^issue\/([^?]+)/.exec(r.path)[1]));
+  };
   const client = new JiraSyncClient({ mode: "scoped", cloudId: CLOUD, email: EMAIL, apiToken: TOKEN, transport, observation: { source: "board", boardId: 199 } });
   assert.deepEqual(client.observeProject("LOOP").map((i) => i.key), ["LOOP-1"]);
   const wrong = new JiraSyncClient({ mode: "scoped", cloudId: CLOUD, email: EMAIL, apiToken: TOKEN, transport: () => facts({ location: { projectKey: "RCC" } }), observation: { source: "board", boardId: 199 } });

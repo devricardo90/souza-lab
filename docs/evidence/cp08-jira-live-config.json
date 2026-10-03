@@ -162,7 +162,7 @@
     "linkTypeId": "10000",
     "inwardLabel": "is blocked by",
     "outwardLabel": "blocks",
-    "dependentEnd": "inward"
+    "dependentEnd": "outward"
   },
   "sprint": {
     "id": 137,
@@ -170,5 +170,16 @@
     "state": "future",
     "originBoardId": 199
   },
-  "sprintMatches": 1
+  "sprintMatches": 1,
+  "completion": {
+    "transitionName": "Feito",
+    "doneStatusName": "Feito",
+    "fromStatusName": "A fazer",
+    "transitionId": "31",
+    "toStatusId": "10219"
+  },
+  "initialStatus": {
+    "id": "10217",
+    "name": "A fazer"
+  }
 }

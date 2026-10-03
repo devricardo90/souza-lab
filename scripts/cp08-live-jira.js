@@ -3,7 +3,7 @@
  * CP-08 live Jira proof (scoped-token transport). REAL Jira, project LOOP only.
  *
  *   node scripts/cp08-live-jira.js <stage> --state <dir>
- *   stages: auth | discover | create | idempotency | dependency | sprint | transition
+ *   stages: auth | discover | create | idempotency | repair-link | dependency | sprint | transition
  *
  * Credentials come from the environment (LOOP_JIRA_EMAIL / LOOP_JIRA_API_TOKEN / LOOP_JIRA_CLOUD_ID) and are never
  * printed. Every write goes through the production path: plan -> reconcile -> outbox (SQLite) -> JiraOutboxExecutor ->
@@ -118,8 +118,8 @@ const stages = {
     const linkTypes = client.listLinkTypes();
     const blocks = linkTypes.filter((t) => t.name === "Blocks");
     if (blocks.length !== 1) throw new Error("expected exactly one Blocks link type");
-    // dependentEnd is PROVEN against real Jira in the `dependency` stage; "inward" is the hypothesis written there.
-    const relationshipDraft = config.relationship ?? { linkTypeName: "Blocks", linkTypeId: blocks[0].id, inwardLabel: blocks[0].inward, outwardLabel: blocks[0].outward, dependentEnd: "inward" };
+    // dependentEnd was PROVEN against real Jira (run CP08MUS8I9PM): the dependent is the POSTed outwardIssue; "inward" was disproven.
+    const relationshipDraft = config.relationship ?? { linkTypeName: "Blocks", linkTypeId: blocks[0].id, inwardLabel: blocks[0].inward, outwardLabel: blocks[0].outward, dependentEnd: "outward" };
     verifyAgainstLinkTypes(relationshipDraft, linkTypes);
     const sprints = client.listBoardSprints(BOARD_ID).filter((s) => s.name === SPRINT_NAME);
     const sprint = sprints.length === 1 ? { id: sprints[0].id, name: sprints[0].name, state: sprints[0].state, originBoardId: sprints[0].originBoardId } : null;
@@ -149,11 +149,18 @@ const stages = {
     const before = reconcile(client);
     out("decision-before", { creates: before.creates.map((d) => d.taskId), noops: before.noops.map((d) => d.taskId), blocked: buildMaterializationOperations({ reconciliation: before, config: materializationConfig() }).blocked.map((b) => `${b.taskId}:${b.reasonCode}`) });
     const op = opFor(run.tasks[0]);
-    if (!op) throw new Error("no JIRA_CREATE operation for the first CP08 task (already materialized? run `idempotency`)");
-    const mark = requests.length;
-    exec.enqueueMaterialization(op);
-    const result = await drive(exec, op.operationId);
-    out("create-result", { ...summarize(result), writes: writesSince(mark) });
+    const existing = remoteKey(client, run.tasks[0]);
+    let result = { outcome: "RESUMED_EXISTING", operation: null };
+    if (!op && existing && run.issues[run.tasks[0]] === existing) {
+      // Resume of a run whose issue was already created (never create a replacement): verify it through the canonical path only.
+      out("create-resume", { key: existing, writes: 0 });
+    } else {
+      if (!op) throw new Error("no JIRA_CREATE operation for the first CP08 task (already materialized? run `idempotency`)");
+      const mark = requests.length;
+      exec.enqueueMaterialization(op);
+      result = await drive(exec, op.operationId);
+      out("create-result", { ...summarize(result), writes: writesSince(mark) });
+    }
     const key = remoteKey(client, run.tasks[0]);
     run.issues[run.tasks[0]] = key; saveRun();
     const raw = client.getIssue(key);
@@ -210,6 +217,47 @@ const stages = {
     store.close(); fresh.close();
   },
 
+  /**
+   * One-off corrective stage (live evidence showed the first Blocks link was written in the reversed direction):
+   * removes ONLY the wrong Blocks link between this run's two issues (never an issue), recreates it with the
+   * live-proven direction and verifies the raw issuelinks of BOTH issues. Idempotent.
+   */
+  async "repair-link"() {
+    const client = jira();
+    const lease = { assertLeaseCurrent: async () => {} };
+    const key1 = run.issues[run.tasks[0]]; const key2 = run.issues[run.tasks[1]];
+    if (!key1 || !key2) throw new Error("both CP08 issues must exist before repair-link");
+    const shape = (issue) => issue.fields.issuelinks.map((l) => ({ id: l.id ?? null, type: l.type?.name, inwardIssue: l.inwardIssue?.key ?? null, outwardIssue: l.outwardIssue?.key ?? null }));
+    const read = () => ({ blocker: shape(client.getIssue(key1, "issuelinks")), dependent: shape(client.getIssue(key2, "issuelinks")) });
+    const before = read();
+    out("links-before", { [key1]: before.blocker, [key2]: before.dependent });
+    // wrong direction (disproven hypothesis): the dependent's entry names the blocker as outwardIssue
+    const wrong = before.dependent.filter((l) => l.type === "Blocks" && l.outwardIssue === key1);
+    if (wrong.length > 1) throw new Error("more than one reversed Blocks link; refusing to guess");
+    if (wrong.length === 1) {
+      record({ op: "reversed-link-observed", dependentKey: key2, blockerKey: key1, linkId: wrong[0].id, note: "Link created by the dependency stage under the disproven hypothesis (dependentEnd=inward): POST inwardIssue=" + key2 + ", outwardIssue=" + key1 + " rendered live as " + key2 + " outwardIssue " + key1 + " / " + key1 + " inwardIssue " + key2 + ". Live verification disproved the previous direction hypothesis." });
+      const removed = await client.removeIssueLink({ linkId: wrong[0].id, issueKey: key2, otherKey: key1, typeName: "Blocks" }, lease);
+      const mid = read();
+      const gone = !mid.dependent.some((l) => String(l.id) === String(wrong[0].id)) && !mid.blocker.some((l) => String(l.id) === String(wrong[0].id));
+      out("link-removed", { removed, goneFromBothIssues: gone });
+      record({ op: "reversed-link-removed", linkId: wrong[0].id, goneFromBothIssues: gone, issuesDeleted: 0 });
+      if (!gone) throw new Error("reversed link still present after removal");
+    } else out("link-removed", { removed: null, note: "no reversed link present" });
+    const state = read();
+    const correct = state.dependent.filter((l) => l.type === "Blocks" && l.inwardIssue === key1);
+    if (correct.length === 0) {
+      const mark = requests.length;
+      await client.linkIssues({ blockerKey: key1, dependentKey: key2, relationship: relationship() }, lease);
+      out("link-created", { body: "inwardIssue=blocker, outwardIssue=dependent", blockerKey: key1, dependentKey: key2, writes: writesSince(mark) });
+    } else out("link-created", { note: "correct link already present", count: correct.length });
+    const after = read();
+    const dependentOk = after.dependent.filter((l) => l.type === "Blocks").length === 1 && after.dependent.some((l) => l.type === "Blocks" && l.inwardIssue === key1 && l.outwardIssue === null);
+    const blockerOk = after.blocker.filter((l) => l.type === "Blocks").length === 1 && after.blocker.some((l) => l.type === "Blocks" && l.outwardIssue === key2 && l.inwardIssue === null);
+    out("links-after", { [key1]: after.blocker, [key2]: after.dependent, blockerBlocksDependent: blockerOk, dependentIsBlockedByBlocker: dependentOk });
+    record({ op: "correct-link-verified", blockerKey: key1, dependentKey: key2, [`${key1}_raw`]: after.blocker.map(({ id, ...rest }) => rest), [`${key2}_raw`]: after.dependent.map(({ id, ...rest }) => rest), blockerBlocksDependent: blockerOk, dependentIsBlockedByBlocker: dependentOk, relationship: relationship() });
+    if (!blockerOk || !dependentOk) throw new Error("correct link direction not verified from raw issuelinks");
+  },
+
   async dependency() {
     const client = jira();
     const store = openOutbox();
@@ -218,11 +266,16 @@ const stages = {
     out("link-type-live", types.find((t) => t.name === "Blocks"));
     verifyAgainstLinkTypes(relationship(), types);
     const op = opFor(run.tasks[1]);
-    if (!op) throw new Error("no JIRA_CREATE operation for task 2 (blocked or already materialized)");
-    const mark = requests.length;
-    exec.enqueueMaterialization(op);
-    const result = await drive(exec, op.operationId);
-    out("dependent-create", { ...summarize(result), writes: writesSince(mark) });
+    let result = { outcome: "RESUMED_EXISTING" };
+    if (!op && run.issues[run.tasks[1]] && remoteKey(client, run.tasks[1]) === run.issues[run.tasks[1]]) {
+      out("dependent-resume", { key: run.issues[run.tasks[1]], writes: 0 }); // the dependent already exists: verify, never recreate
+    } else {
+      if (!op) throw new Error("no JIRA_CREATE operation for task 2 (blocked or already materialized)");
+      const mark = requests.length;
+      exec.enqueueMaterialization(op);
+      result = await drive(exec, op.operationId);
+      out("dependent-create", { ...summarize(result), writes: writesSince(mark) });
+    }
     const key2 = remoteKey(client, run.tasks[1]);
     const key1 = run.issues[run.tasks[0]];
     run.issues[run.tasks[1]] = key2; saveRun();
@@ -233,7 +286,8 @@ const stages = {
     out("normalized", { taskIdMarker: normalized?.taskIdMarker, dependencies: normalized?.dependencies ?? normalized?.dependsOn ?? null, keys: normalized && Object.keys(normalized) });
     const after = reconcile(client);
     out("reconcile-after", { noops: after.noops.map((d) => `${d.taskId}:${d.reasonCode}`), conflicts: after.conflicts.map((d) => `${d.taskId}:${d.reasonCode}:${JSON.stringify(d.differences ?? [])}`), creates: after.creates.map((d) => d.taskId) });
-    record({ op: "dependency", dependentKey: key2, blockerKey: key1, outcome: result.outcome, noops: after.noops.length });
+    record({ op: "dependency", dependentKey: key2, blockerKey: key1, outcome: result.outcome, noops: after.noops.length, conflicts: after.conflicts.length });
+    if (after.conflicts.length > 0 || after.noops.length !== 2) throw new Error("dependency reconcile is not NOOP for both tasks");
     store.close();
   },
 

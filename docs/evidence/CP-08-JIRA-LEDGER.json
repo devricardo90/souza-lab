@@ -24,5 +24,142 @@
     "errorCode": "AUTH_INVALID",
     "http": 401,
     "note": "POST /issue rejected 401 (also for an invalid body): token lacks create/write scope. No Jira object created."
+  },
+  {
+    "at": "2026-10-03T10:12:25.484Z",
+    "runId": "CP08MUS8GLQA",
+    "stage": "auth",
+    "op": "auth",
+    "http": 200
+  },
+  {
+    "at": "2026-10-03T10:13:45.727Z",
+    "runId": "CP08MUS8I9PM",
+    "stage": "discover",
+    "op": "discover",
+    "sprintFound": true
+  },
+  {
+    "at": "2026-10-03T10:14:03.927Z",
+    "runId": "CP08MUS8I9PM",
+    "stage": "create",
+    "op": "create",
+    "taskId": "CP08MUS8I9PM-1",
+    "issueKey": "LOOP-1",
+    "outcome": "CONFLICT",
+    "reconcile": null
+  },
+  {
+    "at": "2026-10-03T10:18:16.811Z",
+    "runId": "CP08MUS8I9PM",
+    "stage": "create",
+    "op": "create",
+    "taskId": "CP08MUS8I9PM-1",
+    "issueKey": "LOOP-1",
+    "outcome": "RESUMED_EXISTING",
+    "reconcile": "NOOP"
+  },
+  {
+    "at": "2026-10-03T10:18:39.586Z",
+    "runId": "CP08MUS8I9PM",
+    "stage": "idempotency",
+    "op": "idempotency",
+    "issueKey": "LOOP-1",
+    "commentId": "13193",
+    "markedComments": 1,
+    "secondIssueCreated": false
+  },
+  {
+    "at": "2026-10-03T10:19:06.717Z",
+    "runId": "CP08MUS8I9PM",
+    "stage": "dependency",
+    "op": "dependency",
+    "dependentKey": "LOOP-2",
+    "blockerKey": "LOOP-1",
+    "outcome": "CONFLICT",
+    "noops": 0
+  },
+  {
+    "at": "2026-10-03T10:32:26.346Z",
+    "runId": "CP08MUS8I9PM",
+    "stage": "repair-link",
+    "op": "reversed-link-observed",
+    "dependentKey": "LOOP-2",
+    "blockerKey": "LOOP-1",
+    "linkId": "10244",
+    "note": "Link created by the dependency stage under the disproven hypothesis (dependentEnd=inward): POST inwardIssue=LOOP-2, outwardIssue=LOOP-1 rendered live as LOOP-2 outwardIssue LOOP-1 / LOOP-1 inwardIssue LOOP-2. Live verification disproved the previous direction hypothesis."
+  },
+  {
+    "at": "2026-10-03T10:32:31.615Z",
+    "runId": "CP08MUS8I9PM",
+    "stage": "repair-link",
+    "op": "reversed-link-removed",
+    "linkId": "10244",
+    "goneFromBothIssues": true,
+    "issuesDeleted": 0
+  },
+  {
+    "at": "2026-10-03T10:32:35.887Z",
+    "runId": "CP08MUS8I9PM",
+    "stage": "repair-link",
+    "op": "correct-link-verified",
+    "blockerKey": "LOOP-1",
+    "dependentKey": "LOOP-2",
+    "LOOP-1_raw": [
+      {
+        "type": "Blocks",
+        "inwardIssue": null,
+        "outwardIssue": "LOOP-2"
+      }
+    ],
+    "LOOP-2_raw": [
+      {
+        "type": "Blocks",
+        "inwardIssue": "LOOP-1",
+        "outwardIssue": null
+      }
+    ],
+    "blockerBlocksDependent": true,
+    "dependentIsBlockedByBlocker": true,
+    "relationship": {
+      "linkTypeName": "Blocks",
+      "linkTypeId": "10000",
+      "inwardLabel": "is blocked by",
+      "outwardLabel": "blocks",
+      "dependentEnd": "outward"
+    }
+  },
+  {
+    "at": "2026-10-03T10:32:55.712Z",
+    "runId": "CP08MUS8I9PM",
+    "stage": "dependency",
+    "op": "dependency",
+    "dependentKey": "LOOP-2",
+    "blockerKey": "LOOP-1",
+    "outcome": "RESUMED_EXISTING",
+    "noops": 2,
+    "conflicts": 0
+  },
+  {
+    "at": "2026-10-03T10:33:19.287Z",
+    "runId": "CP08MUS8I9PM",
+    "stage": "sprint",
+    "op": "sprint",
+    "sprintId": 137,
+    "issues": [
+      "LOOP-1",
+      "LOOP-2"
+    ],
+    "exact": true
+  },
+  {
+    "at": "2026-10-03T10:33:36.587Z",
+    "runId": "CP08MUS8I9PM",
+    "stage": "transition",
+    "op": "transition",
+    "issueKey": "LOOP-1",
+    "from": "A fazer",
+    "to": "Feito",
+    "outcome": "CONFIRMED"
   }
 ]

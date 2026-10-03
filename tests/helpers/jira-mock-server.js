@@ -85,9 +85,9 @@ const server = http.createServer((req, res) => {
     }
     if (transitions && req.method === "GET") return json(res, 200, { transitions: [{ id: "31", name: "Done" }] });
     const stored = (key) => state.issues.find((candidate) => candidate.key === key);
-    // Link semantics follow Jira's rendering rule: on an issue, an entry lists the OTHER issue under the key
-    // named after this issue's own end of the link ("X is blocked by Y": X is the inward end, X's entry shows
-    // inwardIssue: Y; Y's entry shows outwardIssue: X). Both-sided so reversed configurations are really detectable.
+    // Link rendering follows the behaviour OBSERVED on live Jira (CP-08): POST inwardIssue=X, outwardIssue=Y makes
+    // X's entry show `outwardIssue: Y` and Y's entry show `inwardIssue: X` (the other issue is keyed by ITS OWN POST end).
+    // Both-sided so reversed configurations are really detectable.
     if (p === "/rest/api/3/issueLinkType" && req.method === "GET") return json(res, 200, { issueLinkTypes: state.linkTypes });
     if (p === "/rest/api/3/issueLink" && req.method === "POST") {
       const body = JSON.parse(raw);
@@ -95,8 +95,8 @@ const server = http.createServer((req, res) => {
       const outward = stored(body.outwardIssue?.key);
       if (!inward || !outward) return json(res, 404, { errorMessages: ["issue not found"] });
       if (!state.linkTypes.some((t) => t.name === body.type?.name)) return json(res, 400, { errorMessages: ["unknown link type"] });
-      inward.fields.issuelinks.push({ type: { name: body.type.name }, inwardIssue: { key: outward.key } });
-      outward.fields.issuelinks.push({ type: { name: body.type.name }, outwardIssue: { key: inward.key } });
+      inward.fields.issuelinks.push({ type: { name: body.type.name }, outwardIssue: { key: outward.key } });
+      outward.fields.issuelinks.push({ type: { name: body.type.name }, inwardIssue: { key: inward.key } });
       res.writeHead(201);
       return res.end();
     }

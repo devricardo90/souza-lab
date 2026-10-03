@@ -1,102 +1,85 @@
-# CP-08 Jira live proof: status and token scope reconciliation
+# CP-08 Jira live proof: status
 
-**CP08_STATUS = PARTIAL_BLOCKED_EXTERNAL**
-**BLOCKER = JIRA_SCOPED_TOKEN_WRITE_ACCESS**
+**CP08_LIVE_STATUS = ALL_LIVE_STAGES_PASSED** (run `CP08MUS8I9PM`, project LOOP only)
+**REVIEW_STATUS = READY_FOR_INDEPENDENT_REVIEW** (not merged; CP-09 not started)
 
-CP-08 is not complete and must not be merged or closed. Google remains `BLOCKED_PENDING_GOOGLE_CREDENTIALS`.
+Every fact below is taken from observed output of `scripts/cp08-live-jira.js` and the append-only ledger
+`docs/evidence/CP-08-JIRA-LEDGER.json`. Google remains `BLOCKED_PENDING_GOOGLE_CREDENTIALS` and is out of scope here.
+Scoped transport: `api.atlassian.com/ex/jira/{cloudId}`; credentials come from the environment and are never printed or stored.
 
-## Observed facts (live, project LOOP only)
+## Live stages (run CP08MUS8I9PM)
 
-| Proof | Result |
+| Stage | Endpoint(s) | HTTP | Result | Jira object |
+| --- | --- | --- | --- | --- |
+| auth | `GET /rest/api/3/myself` | 200 | PASS (`accountType: atlassian`, `active: true`) | none |
+| discover | `GET agile/board/199`, `issue/createmeta/LOOP/issuetypes[/10230]`, `issueLinkType`, `agile board/199/sprint` | 200 | PASS | none |
+| create | `POST issue` | 201 | PASS after the observation fix below | LOOP-1 (Tarefa) |
+| ADF roundtrip | `GET issue/LOOP-1` | 200 | PASS: marker, metadata and AC-001/AC-002 decode; reconcile NOOP / STATE_MATCH | LOOP-1 |
+| create idempotency | board + `GET issue/LOOP-1` | 200 | PASS: fresh outbox -> CONFIRMED, 0 writes; no second issue | none |
+| comment idempotency | `POST issue/LOOP-1/comment` | 201 | PASS: 1 write, repeats 0 writes, exactly 1 marked comment | comment 13193 on LOOP-1 |
+| dependency | `POST issue` (LOOP-2), `POST issueLink`, then corrective `DELETE issueLink/10244` and `POST issueLink` | 201 / 204 / 201 | PASS after the direction correction below; both tasks NOOP / STATE_MATCH | LOOP-2; link 10245 |
+| sprint | `POST agile/sprint/137/issue` (one per issue) | 204 | PASS: final membership exactly `[LOOP-1, LOOP-2]`; repeat 0 writes | sprint 137 "CP08 Test" |
+| transition discovery | `GET issue/LOOP-1/transitions` | 200 | PASS: `A fazer`(11, new), `Fazendo`(21, indeterminate), `Feito`(31, done); exactly one done transition | none |
+| status transition | `POST issue/LOOP-1/transitions` | 204 | PASS: `A fazer` -> `Feito` (done); repeat (same and fresh outbox) 0 writes | LOOP-1 |
+
+No Jira issue was deleted at any point. Board 199 holds exactly LOOP-1 and LOOP-2 from this run.
+
+## Defects found by the live proof and corrected
+
+1. **Board observation returned a stringified description.** `GET agile/board/{id}/issue` serves `description` as a rendered
+   string, not ADF, so acceptance criteria could not be decoded and a correct LOOP-1 reconciled to `REMOTE_INVALID`
+   (create returned CONFLICT; the issue itself was correct). Fix: the board endpoint now only enumerates candidate keys
+   (foreign-project keys are dropped and never fetched); reconciliation uses `GET /rest/api/3/issue/{key}`. A canonical
+   response for a different key fails closed. `REMOTE_INVALID` detection and the write guard are unchanged.
+   Tests: `tests/jira-board-canonical.test.js`.
+2. **The dependency direction hypothesis was disproven.** The first Blocks link was written with `dependentEnd: "inward"`
+   (POST `inwardIssue`=LOOP-2, `outwardIssue`=LOOP-1). Live raw issuelinks showed LOOP-2 `outwardIssue: LOOP-1` and
+   LOOP-1 `inwardIssue: LOOP-2`, i.e. the reverse of "LOOP-2 depends on LOOP-1"; reconciliation reported DEPENDENCY_DRIFT on
+   both tasks. Live behaviour is the source of truth: Jira keys the OTHER issue on an entry by that issue's own POST end.
+   Corrected mapping: the dependent is the POSTed `outwardIssue` (`dependentEnd: "outward"`), the blocker the POSTed
+   `inwardIssue`, and the blocker is read on the dependent under the opposite end's key. Updated: `src/reconcile/jira-relationship.js`
+   (`blockerOf`, `SYNTHETIC_BLOCKS_RELATIONSHIP`), the Jira mock's link rendering, the live config, and
+   `tests/jira-relationship.test.js` (three regression tests built from the raw live shapes).
+
+## Corrective link repair (ledger entries, run CP08MUS8I9PM)
+
+| Ledger op | Observed |
 | --- | --- |
-| Scoped transport (`api.atlassian.com/ex/jira/{cloudId}`), production client | implemented; offline-tested |
-| `GET /rest/api/3/myself` through the production client | **HTTP 200** |
-| Metadata discovery (board 199, issue types, createmeta fields, link types, sprint) | **PASS** |
-| Task issue type | "Tarefa", id 10230 (instance is localized; "Task" does not exist) |
-| Sprint "CP08 Test" | id 137, state `future`, exactly one match on board 199 |
-| `POST /issue` (outbox JIRA_CREATE, run CP08MUS5UCQI) | **HTTP 401** -> `AUTH_INVALID` -> `FAILED_PERMANENT` after 1 attempt |
-| `POST /issue` with an intentionally invalid body | **HTTP 401** (scope check precedes validation) |
-| Jira objects created | **none** (board 199: 0 issues; sprint 137: 0 members) |
+| `dependency` (CONFLICT, 0 noops) | original reversed link created by the dependency stage |
+| `reversed-link-observed` | link 10244: LOOP-2 `outwardIssue` LOOP-1 / LOOP-1 `inwardIssue` LOOP-2; direction hypothesis disproven |
+| `reversed-link-removed` | `DELETE issueLink/10244` -> 204; link gone from both issues; issues deleted: 0 |
+| `correct-link-verified` | `POST issueLink` (inward=LOOP-1, outward=LOOP-2) -> 201; link 10245 |
+| `dependency` (RESUMED_EXISTING, 2 noops, 0 conflicts) | both tasks STATE_MATCH |
 
-Also 401 with this token: `GET search`, `GET search/jql`, `POST search/jql`, `project/{key}`, `project/search`,
-`project/{key}/statuses`, `field`, `issuetype`, `status`, `board/{id}/configuration`.
-Working with this token: `myself`, `issueLinkType`, `issue/createmeta/...`, agile `board/199`, `board/199/issue`,
-`board/199/sprint`, `sprint/137`, `sprint/137/issue`.
+Raw live issuelinks after the repair:
 
-## Not proven (BLOCKED, not passed)
+- LOOP-1: `[{ type: Blocks, outwardIssue: LOOP-2 }]`: **LOOP-1 blocks LOOP-2**
+- LOOP-2: `[{ type: Blocks, inwardIssue: LOOP-1 }]`: **LOOP-2 is blocked by LOOP-1**
 
-ADF round-trip, create, create idempotency, comment idempotency, dependency semantics and direction (the configured
-`dependentEnd: "inward"` is an **unproven hypothesis**), exact sprint membership, transition discovery, status
-transition. Nothing in this repository's unit tests substitutes for these.
+Only the one wrong link between LOOP-1 and LOOP-2 was removed, through the guarded `removeIssueLink` (project LOOP, Loop
+ownership of both ends, exact link id/type/counterpart verified before the DELETE; tests in `tests/jira-remove-link.test.js`).
 
-## Scope reconciliation
+## Token scope notes (observed)
 
-Source: Atlassian's published OpenAPI specs (`dac-static.atlassian.com/cloud/jira/platform/swagger-v3.v3.json` and
-`.../software/swagger.v3.json`), `security` / `x-atlassian-oauth2-scopes` per operation, read on 2026-10-03.
-Each operation accepts EITHER the classic scope OR the granular set marked Beta; the granular set must be complete
-for that operation.
+With the reloaded token: `myself`, `issue` create/read, `issueLink` create/delete, comments, transitions, `issueLinkType`,
+createmeta, agile board/sprint reads and `POST agile sprint/{id}/issue` all succeeded. Search endpoints
+(`GET search`, `search/jql`, `POST search/jql`) were 401 with the earlier token and were not retried; CP-08 uses the
+explicit `board` observation source with per-issue canonical reads instead.
 
-| Endpoint used by CP-08 | Classic scope | Granular scopes |
-| --- | --- | --- |
-| GET myself | read:jira-user | read:application-role:jira, read:group:jira, read:user:jira, read:avatar:jira |
-| POST issue (create) | write:jira-work | write:issue:jira, write:comment:jira, write:comment.property:jira, write:attachment:jira, read:issue:jira |
-| GET issue/{key} | read:jira-work | read:issue-meta:jira, read:issue-security-level:jira, read:issue.vote:jira, read:issue.changelog:jira, read:avatar:jira, read:issue:jira, read:status:jira, read:user:jira, read:field-configuration:jira |
-| PUT issue/{key} (update; reserved, not used yet) | write:jira-work | write:issue:jira |
-| GET createmeta/{project}/issuetypes[/{id}] | read:jira-work | read:issue-meta:jira, read:avatar:jira, read:field-configuration:jira |
-| GET issue/{key}/comment | read:jira-work | read:comment:jira, read:comment.property:jira, read:group:jira, read:project:jira, read:project-role:jira, read:user:jira, read:avatar:jira |
-| POST issue/{key}/comment | write:jira-work | write:comment:jira + the read set above |
-| POST issueLink | write:jira-work | write:comment:jira, write:issue:jira, write:issue-link:jira |
-| GET issueLinkType | read:jira-work | read:issue-link-type:jira |
-| GET search (DEPRECATED, being removed) | read:jira-work | read:issue-details:jira, read:audit-log:jira, read:avatar:jira, read:field-configuration:jira, read:issue-meta:jira |
-| GET search/jql | read:jira-work | read:issue-details:jira, read:audit-log:jira, read:avatar:jira, read:field-configuration:jira, read:issue-meta:jira |
-| POST search/jql | read:jira-work | read:issue-details:jira, read:field.default-value:jira, read:field.option:jira, read:field:jira, read:group:jira |
-| GET project/{key}, project/search | read:jira-work | read:issue-type:jira, read:project:jira, read:project.property:jira, read:user:jira, read:application-role:jira, read:avatar:jira, read:group:jira, read:issue-type-hierarchy:jira, read:project-category:jira, read:project-version:jira, read:project.component:jira |
-| GET project/{key}/statuses | read:jira-work | read:issue-status:jira, read:issue-type:jira, read:status:jira |
-| GET issuetype | read:jira-work | read:issue-type:jira, read:avatar:jira, read:project-category:jira, read:project:jira |
-| GET field | read:jira-work | read:field:jira, read:avatar:jira, read:project-category:jira, read:project:jira, read:field-configuration:jira |
-| GET status | read:jira-work | read:status:jira |
-| GET issue/{key}/transitions | read:jira-work | read:issue.transition:jira, read:status:jira, read:field-configuration:jira |
-| **POST issue/{key}/transitions** | write:jira-work | **write:issue:jira, write:issue.property:jira** |
-| GET agile board/{id}, board/{id}/issue | read:board-scope:jira-software + read:issue-details:jira | (same; no Beta variant listed) |
-| GET agile board/{id}/sprint, sprint/{id} | read:sprint:jira-software | |
-| GET agile sprint/{id}/issue | read:sprint:jira-software + read:issue-details:jira + read:jql:jira | |
-| **POST agile sprint/{id}/issue** (assignment) | **write:sprint:jira-software** | |
+## Known limits
 
-Corrections to the earlier proposed list:
+- Board observation is index-backed and may lag writes. Sprint assignment and issue creation each hit one
+  `UNCERTAIN_WRITE` retry-wait that resolved to CONFIRMED with exactly one write.
+- Production search mode still uses the deprecated `GET /rest/api/3/search`; moving it to `search/jql` is outside CP-08.
+- Same-outbox repeat of the first create reports `NOT_OWNER` because that outbox row is the terminal CONFLICT from the
+  pre-fix attempt; the fresh-outbox repeat (the stronger lost-outbox case) reports CONFIRMED with 0 writes.
 
-- **`write:issue.transition:jira` does not exist and is not required.** Executing a transition needs
-  `write:issue:jira` + `write:issue.property:jira` (or classic `write:jira-work`). Discovering transitions needs
-  `read:issue.transition:jira` (+ `read:status:jira`, `read:field-configuration:jira`).
-- `read:issue:jira-software` was not required by any endpoint CP-08 uses. Agile board issue reads need
-  `read:board-scope:jira-software` + `read:issue-details:jira`.
-- `write:issue-link:jira` alone is not enough for `POST issueLink`; the spec also lists `write:issue:jira` and `write:comment:jira`.
+## Local verification
 
-Simplest sufficient classic set: `read:jira-work`, `write:jira-work`, `read:jira-user`, plus
-`read:board-scope:jira-software`, `read:sprint:jira-software`, `write:sprint:jira-software`,
-`read:issue-details:jira`, `read:jql:jira`. If granular scopes are chosen instead, every scope in the rows above must be present.
+Run after the final relationship and observation fixes (no source change afterwards):
 
-Observed 401s are consistent with missing scopes (e.g. `search/jql` needs `read:audit-log:jira` and `POST issue` needs
-`write:issue:jira`), but the token's actual scope list is not introspectable, so this is not proven which exact scope is absent.
-
-## Known gaps to address before the live stages
-
-- `JiraSyncClient.observeProject` (search mode) and `JiraTaskSystemAdapter.search` call the deprecated
-  `GET /rest/api/3/search`, which Atlassian is removing. Production search mode should move to `GET search/jql`
-  (token pagination, no `total`; results may lag writes). CP-08 uses the explicit `board` observation source instead.
-- Board observation is an index-backed read and may lag writes; read-after-write over it is unproven live.
-
-## Re-run procedure after the Owner replaces the token
-
-Use a fresh state dir; the previous outbox row for run CP08MUS5UCQI is terminal `FAILED_PERMANENT`.
-
-```
-node scripts/cp08-live-jira.js auth        --state <fresh-dir>
-node scripts/cp08-live-jira.js discover    --state <fresh-dir>
-node scripts/cp08-live-jira.js create      --state <fresh-dir>
-node scripts/cp08-live-jira.js idempotency --state <fresh-dir>
-node scripts/cp08-live-jira.js dependency  --state <fresh-dir>
-node scripts/cp08-live-jira.js sprint      --state <fresh-dir>
-node scripts/cp08-live-jira.js transition  --state <fresh-dir>
-```
-
-Stop at the first failing stage. Evidence must be updated from observed output only.
+- `npm test`: 501 tests, 501 pass, 0 fail, 0 skipped.
+- `git diff --check`: exit 0 (only CRLF line-ending warnings).
+- Secret scan (128 tracked and untracked files plus the run state directory): no occurrence of the Jira token, email or
+  cloud id values, no Basic credential, no `ATATT` token; the only pattern hit is the synthetic `ghp_abcd...` redaction
+  fixture in `tests/gh-runner.test.js` (committed in a0da5ae, not a credential).
