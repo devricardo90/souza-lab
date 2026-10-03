@@ -68,9 +68,9 @@ function createView(op, clock, jira, relationship) {
     documentId: m.sourceDocumentId, planVersion: m.planVersion, contentHash: m.snapshotContentHash,
     tasks: [{ taskId: m.taskId, title: m.title, epicId: m.epicId, dependsOn: m.dependsOn, acceptanceCriteria: m.acceptanceCriteria, taskHash: m.taskHash }],
   };
-  const observe = () => normalizeJiraObservation(jira.observeProject(config.projectKey), { relationship });
-  const decide = () => {
-    const result = reconcilePlan({ snapshot, observation: observe(), createdAt: clock() });
+  const observe = (include = []) => normalizeJiraObservation(jira.observeProject(config.projectKey, { include }), { relationship });
+  const decide = (include = []) => {
+    const result = reconcilePlan({ snapshot, observation: observe(include), createdAt: clock() });
     return [...result.creates, ...result.noops, ...result.conflicts][0];
   };
   return { config, m, decide, observe };
@@ -115,8 +115,9 @@ function handlers(jira, clock, relationship) {
           dependentKey = created.key;
         }
         for (const blockerKey of blockerKeys) await jira.linkIssues({ blockerKey, dependentKey, relationship }, context);
-        // read-after-write: exactly one issue with this LOOP_TASK_ID and a matching plan-owned definition
-        const record = decide();
+        // read-after-write: exactly one issue with this LOOP_TASK_ID and a matching plan-owned definition. The key Jira just
+        // returned is read canonically (never only through an index that may lag), so a created issue cannot look absent.
+        const record = decide([dependentKey]);
         if (record.decision === "NOOP") return { result: "CONFIRMED", issueKey: record.jiraIssueKey };
         if (record.decision === "CREATE") return { result: "UNCERTAIN", detail: "no issue carrying the LOOP_TASK_ID found after create" };
         return { result: "CONFLICT", code: record.reasonCode, detail: `${record.reasonCode}${record.jiraIssueKeys ? ` (${record.jiraIssueKeys.join(", ")})` : ""}` };

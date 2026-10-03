@@ -236,7 +236,7 @@ const stages = {
     if (wrong.length > 1) throw new Error("more than one reversed Blocks link; refusing to guess");
     if (wrong.length === 1) {
       record({ op: "reversed-link-observed", dependentKey: key2, blockerKey: key1, linkId: wrong[0].id, note: "Link created by the dependency stage under the disproven hypothesis (dependentEnd=inward): POST inwardIssue=" + key2 + ", outwardIssue=" + key1 + " rendered live as " + key2 + " outwardIssue " + key1 + " / " + key1 + " inwardIssue " + key2 + ". Live verification disproved the previous direction hypothesis." });
-      const removed = await client.removeIssueLink({ linkId: wrong[0].id, issueKey: key2, otherKey: key1, typeName: "Blocks" }, lease);
+      const removed = await client.removeIssueLink({ linkId: wrong[0].id, blockerKey: key2, dependentKey: key1, relationship: relationship() }, lease); // the reversed link as it exists: key2 "blocks" key1
       const mid = read();
       const gone = !mid.dependent.some((l) => String(l.id) === String(wrong[0].id)) && !mid.blocker.some((l) => String(l.id) === String(wrong[0].id));
       out("link-removed", { removed, goneFromBothIssues: gone });

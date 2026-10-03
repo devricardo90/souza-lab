@@ -54,7 +54,8 @@ test("board observation: proves the board belongs to the project and drops forei
   const transport = (r) => {
     if (r.path === "board/199") return facts({ location: { projectKey: "LOOP" } });
     if (r.path.startsWith("board/199/issue")) return facts({ issues: [issue("LOOP-1"), issue("RCC-9")], total: 2 });
-    return facts(issue(/^issue\/([^?]+)/.exec(r.path)[1]));
+    const requested = /^issue\/([^?]+)/.exec(r.path)[1];
+    return requested === "LOOP-1" ? facts(issue(requested)) : facts({ errorMessages: ["not found"] }, 404); // the frontier probe past LOOP-1 ends at 404
   };
   const client = new JiraSyncClient({ mode: "scoped", cloudId: CLOUD, email: EMAIL, apiToken: TOKEN, transport, observation: { source: "board", boardId: 199 } });
   assert.deepEqual(client.observeProject("LOOP").map((i) => i.key), ["LOOP-1"]);

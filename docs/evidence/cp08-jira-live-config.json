@@ -181,5 +181,8 @@
   "initialStatus": {
     "id": "10217",
     "name": "A fazer"
+  },
+  "provenance": {
+    "note": "Added in the post-review fix commit. Everything above was written by scripts/cp08-live-jira.js stages `discover` and `transition` from live responses. `transport.observationReason` is the author's explanation: the search-endpoint 401s it cites were seen in console output only and are not recorded in the ledger. See docs/evidence/CP-08-JIRA-LIVE-STATUS.md, section 'Evidence provenance'."
   }
 }

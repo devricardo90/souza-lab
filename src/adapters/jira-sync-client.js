@@ -31,6 +31,7 @@ export class JiraSyncError extends Error {
   }
 }
 
+const MAX_FRONTIER_PROBE = 25;
 export const OBSERVATION_SOURCES = Object.freeze(["search", "board"]);
 export const defaultJiraWriteTransport = jiraCurlTransport;
 
@@ -118,10 +119,10 @@ export class JiraSyncClient {
    * Read-only full scan of a project's issues in the raw shape the pure observation layer consumes.
    * Deliberately a deterministic scan, not a text search: Jira search indexes can lag writes.
    */
-  observeProject(projectKey, { pageSize = 100, maxIssues = 2000 } = {}) {
+  observeProject(projectKey, { pageSize = 100, maxIssues = 2000, include = [] } = {}) {
     if (typeof projectKey !== "string" || !/^[A-Z][A-Z0-9]*$/.test(projectKey)) throw new JiraSyncError("a valid Jira project key is required", "CONFIG_INVALID", "INVARIANT_VIOLATION");
     const fields = "summary,status,description,issuelinks,parent,issuetype";
-    if (this.observation.source === "board") return this.observeBoard(projectKey, { pageSize, maxIssues, fields });
+    if (this.observation.source === "board") return this.observeBoard(projectKey, { pageSize, maxIssues, fields, include });
     const issues = [];
     let startAt = 0;
     for (;;) {
@@ -139,8 +140,15 @@ export class JiraSyncClient {
   /**
    * Explicitly configured alternative for tokens whose scopes exclude the search endpoints: scans the issues of ONE
    * Scrum/Kanban board (agile API) after proving the board belongs to the requested project. Never selected implicitly.
+   *
+   * The board is index-backed and can LAG a write. Lag must never make an owned, just-created issue look absent (that
+   * would justify a second create), so the board only enumerates candidates and two non-index reads close the gap:
+   *   - `include`: keys the caller already knows exist (e.g. the key a create returned) are read canonically;
+   *   - frontier probe: the keys directly after the highest known key are read canonically (GET issue/{key}) until Jira
+   *     answers 404, so issues the board has not indexed yet are still observed (this also covers a lost create response).
+   *     A frontier longer than MAX_FRONTIER_PROBE fails closed.
    */
-  observeBoard(projectKey, { pageSize, maxIssues, fields }) {
+  observeBoard(projectKey, { pageSize, maxIssues, fields, include = [] }) {
     const { boardId } = this.observation;
     const board = this.request(`board/${boardId}`, { api: "agile" });
     if (board?.location?.projectKey !== projectKey) throw new JiraSyncError(`board ${boardId} does not belong to project ${projectKey}`, "CONFIG_INVALID", "INVARIANT_VIOLATION");
@@ -153,15 +161,39 @@ export class JiraSyncClient {
       issues.push(...page.issues);
       if (issues.length > maxIssues) throw new JiraSyncError("Jira board exceeds the supported scan limit", "INVALID_RESPONSE", "EXTERNAL_BLOCK");
       startAt += page.issues.length;
-      if (page.issues.length === 0 || startAt >= Number(page.total ?? issues.length)) break;
+      // Pagination must be provable: a page with neither a numeric total nor a boolean isLast could silently truncate the scan.
+      const hasTotal = Number.isFinite(page.total);
+      if (!hasTotal && typeof page.isLast !== "boolean") throw new JiraSyncError("Jira board page carries neither a numeric total nor isLast; refusing to assume the scan is complete", "INVALID_RESPONSE", "EXTERNAL_BLOCK");
+      if (page.issues.length === 0 || (hasTotal ? startAt >= page.total : page.isLast)) break;
     }
     // The board endpoint is used ONLY to enumerate candidate keys: its `description` is a rendered string, not canonical ADF.
-    const keys = issues.filter((issue) => typeof issue?.key === "string" && issue.key.startsWith(`${projectKey}-`)).map((issue) => issue.key); // defence in depth: never observe foreign-project issues
-    return keys.map((key) => {
+    const keys = new Set();
+    for (const issue of issues) {
+      if (typeof issue?.key !== "string" || issue.key === "") throw new JiraSyncError("Jira board entry has no issue key (malformed response)", "INVALID_RESPONSE", "EXTERNAL_BLOCK");
+      if (issue.key.startsWith(`${projectKey}-`)) keys.add(issue.key); // defence in depth: foreign-project issues are never observed
+    }
+    const own = new RegExp(`^${projectKey}-(\\d+)$`);
+    for (const key of include) {
+      if (typeof key !== "string" || !own.test(key)) throw new JiraSyncError(`include key ${key} is not an issue of project ${projectKey}`, "INVARIANT_VIOLATION", "INVARIANT_VIOLATION");
+      keys.add(key);
+    }
+    const canonicalRead = (key) => {
       const canonical = this.request(`issue/${encodeURIComponent(key)}?fields=${fields}`);
       if (canonical?.key !== key || !canonical.fields || typeof canonical.fields !== "object") throw new JiraSyncError(`${key}: canonical issue response has an unexpected schema`, "INVALID_RESPONSE", "EXTERNAL_BLOCK");
       return canonical;
-    });
+    };
+    const observed = [...keys].map(canonicalRead);
+    // Frontier probe (see above): read the keys after the highest known one until Jira says 404.
+    let next = Math.max(0, ...[...keys].map((key) => Number(own.exec(key)?.[1] ?? 0))) + 1;
+    for (let probes = 0; ; probes += 1) {
+      if (probes >= MAX_FRONTIER_PROBE) throw new JiraSyncError(`more than ${MAX_FRONTIER_PROBE} ${projectKey} issues exist beyond the board index; refusing to guess`, "INVALID_RESPONSE", "EXTERNAL_BLOCK");
+      let canonical;
+      try { canonical = canonicalRead(`${projectKey}-${next}`); }
+      catch (error) { if (error?.code === "ISSUE_NOT_FOUND") break; throw error; }
+      observed.push(canonical);
+      next += 1;
+    }
+    return observed;
   }
 
   /** Raw create. NOT idempotent by itself: callers (the outbox) reconcile before and verify after. */
@@ -274,20 +306,47 @@ export class JiraSyncClient {
   }
 
   /**
-   * Corrective removal of ONE issue link (CP-08 repair of a wrongly-directed link). Guarded: both ends must be writable
-   * (project + Loop ownership), and the link id must be present on `issueKey` as exactly the expected type pointing at
-   * `otherKey`; otherwise nothing is deleted. Issues are never deleted.
+   * Corrective removal of ONE issue link (CP-08 repair of a wrongly-directed link). It is NOT a generic delete primitive:
+   * it REQUIRES a configured writeGuard, and before the DELETE it independently re-reads BOTH issues canonically
+   * (GET issue/{key}) and requires all of:
+   *   - both keys in the guarded project and carrying a Loop ownership marker accepted by the guard (this run's task set);
+   *   - the exact link id on the DEPENDENT's entry and on the BLOCKER's entry (the same link seen from both ends);
+   *   - the relationship's link type on both entries;
+   *   - the expected pair and direction: per the explicit relationship mapping the dependent's entry names `blockerKey`
+   *     as its blocker, and the blocker's entry names `dependentKey` under the dependent's own end.
+   * `blockerKey`/`dependentKey` describe the link AS IT EXISTS (so a reversed link is removed by passing the reversed pair).
+   * Any mismatch throws WRITE_GUARD_VIOLATION with nothing deleted. After the DELETE the link must be gone from both issues.
+   * Issues are never deleted.
    */
-  async removeIssueLink({ linkId, issueKey, otherKey, typeName }, context) {
+  async removeIssueLink({ linkId, blockerKey, dependentKey, relationship }, context) {
     if (typeof context?.assertLeaseCurrent !== "function") throw new JiraSyncError("active execution lease is required to write to Jira", "LEASE_REQUIRED", "INVARIANT_VIOLATION");
+    const refuse = (why) => { throw new JiraSyncError(`link ${linkId} not removed (${blockerKey} blocks ${dependentKey}): ${why}`, "WRITE_GUARD_VIOLATION", "INVARIANT_VIOLATION"); };
+    if (!this.writeGuard) refuse("removeIssueLink requires a configured writeGuard");
+    const config = parseRelationshipConfig(relationship); // RELATIONSHIP_CONFIG_INVALID before any request
+    if (typeof linkId !== "string" && typeof linkId !== "number") refuse("a link id is required");
+    if (blockerKey === dependentKey) refuse("blocker and dependent must differ");
     await context.assertLeaseCurrent();
-    this.assertWritable(issueKey); this.assertWritable(otherKey);
-    const links = this.getIssue(issueKey, "issuelinks")?.fields?.issuelinks;
-    const entry = Array.isArray(links) ? links.find((link) => String(link?.id) === String(linkId)) : null;
-    const target = entry?.inwardIssue?.key ?? entry?.outwardIssue?.key;
-    if (!entry || entry.type?.name !== typeName || target !== otherKey) throw new JiraSyncError(`link ${linkId} is not a ${typeName} link between ${issueKey} and ${otherKey}; nothing removed`, "WRITE_GUARD_VIOLATION", "INVARIANT_VIOLATION");
+    this.assertWritable(blockerKey); this.assertWritable(dependentKey); // project + Loop ownership, from canonical reads
+    const linksOf = (key) => {
+      const links = this.getIssue(key, "issuelinks")?.fields?.issuelinks;
+      return Array.isArray(links) ? links : [];
+    };
+    const find = (links) => links.find((link) => String(link?.id) === String(linkId)) ?? null;
+    const sameType = (entry) => entry.type?.name === config.linkTypeName && (!config.linkTypeId || String(entry.type?.id ?? config.linkTypeId) === config.linkTypeId);
+    const dependentEntry = find(linksOf(dependentKey));
+    const blockerEntry = find(linksOf(blockerKey));
+    if (!dependentEntry || !blockerEntry) refuse("the link id is not present on both issues");
+    if (!sameType(dependentEntry) || !sameType(blockerEntry)) refuse(`the link is not of type ${config.linkTypeName}`);
+    // direction: the dependent's entry names the blocker under the end opposite to dependentEnd (blockerOf), and nothing else
+    if (blockerOf(config, dependentEntry) !== blockerKey) refuse("the dependent's entry does not name the expected blocker in the expected direction");
+    const mirror = blockerEntry[`${config.dependentEnd}Issue`]?.key;
+    const wrongSide = blockerEntry[`${config.dependentEnd === "inward" ? "outward" : "inward"}Issue`];
+    if (mirror !== dependentKey || wrongSide) refuse("the blocker's entry does not name the expected dependent in the expected direction");
+    await context.assertLeaseCurrent();
     this.request(`issueLink/${encodeURIComponent(String(linkId))}`, { method: "DELETE" });
-    return { linkId: String(linkId), issueKey, otherKey };
+    const gone = !find(linksOf(dependentKey)) && !find(linksOf(blockerKey));
+    if (!gone) throw new JiraSyncError(`link ${linkId} still present after DELETE`, "JIRA_WRITE_UNCONFIRMED", "TRANSIENT");
+    return { linkId: String(linkId), blockerKey, dependentKey, goneFromBothIssues: true };
   }
 
   /** The blocker issue key on a dependent issue's link entry per the explicit mapping (null if not this relation). */
