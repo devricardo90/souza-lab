@@ -108,13 +108,16 @@ const server = http.createServer((req, res) => {
       return res.end();
     }
     if (issue && req.method === "GET") return json(res, 200, { key: issue[1], fields: { status: stored(issue[1])?.fields.status ?? { name: state.status } } });
-    if (p === "/rest/api/3/search") {
+    if (p === "/rest/api/3/search/jql") {
       const description = "Acceptance Criteria\n\n- AC-001: mock condition\n";
       const legacy = state.legacySearch ? [{ key: "LOOP-1", fields: { summary: "Mock", status: { name: state.status }, description, issuelinks: [] } }] : [];
       const all = [...legacy, ...state.issues];
-      const startAt = Number(url.searchParams.get("startAt") ?? 0);
+      const token = url.searchParams.get("nextPageToken");
       const maxResults = Number(url.searchParams.get("maxResults") ?? 100);
-      return json(res, 200, { total: all.length, startAt, maxResults, issues: all.slice(startAt, startAt + maxResults) });
+      const startAt = token ? Number(token) : 0;
+      const page = all.slice(startAt, startAt + maxResults);
+      const next = startAt + page.length;
+      return json(res, 200, { isLast: next >= all.length, ...(next < all.length ? { nextPageToken: String(next) } : {}), issues: page });
     }
     return json(res, 404, { errorMessages: ["not found"] });
   });

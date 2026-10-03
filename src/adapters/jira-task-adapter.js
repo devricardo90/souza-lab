@@ -17,6 +17,32 @@ const AC_HEADING = /^Acceptance Criteria$/;
 const AC_LINE = /^-\s+(AC-\d{2,})\s*:\s*(.+?)\s*$/;
 const MAX_ISSUES = 1000;
 
+function adfTextNode(node, issueKey) {
+  if (!node || node.type !== "text" || typeof node.text !== "string" || Object.keys(node).some((key) => !["type", "text"].includes(key))) throw new JiraTaskSourceError(`${issueKey}: unsupported Jira ADF node`, "JIRA_ADF_UNSUPPORTED");
+  return node.text;
+}
+
+export function normalizeAdfDescription(description, issueKey = "Jira issue") {
+  if (!description || typeof description !== "object" || Array.isArray(description) || description.type !== "doc" || description.version !== 1 || !Array.isArray(description.content) || Object.keys(description).some((key) => !["type", "version", "content"].includes(key))) throw new JiraTaskSourceError(`${issueKey}: unsupported Jira ADF document`, "JIRA_ADF_UNSUPPORTED");
+  const lines = [];
+  for (const node of description.content) {
+    if (!node || typeof node !== "object" || Array.isArray(node)) throw new JiraTaskSourceError(`${issueKey}: unsupported Jira ADF node`, "JIRA_ADF_UNSUPPORTED");
+    if (node.type === "paragraph") {
+      if (!Array.isArray(node.content) || node.content.length !== 1 || Object.keys(node).some((key) => !["type", "content"].includes(key))) throw new JiraTaskSourceError(`${issueKey}: unsupported Jira ADF paragraph`, "JIRA_ADF_UNSUPPORTED");
+      lines.push(adfTextNode(node.content[0], issueKey));
+    } else if (node.type === "bulletList") {
+      if (!Array.isArray(node.content) || Object.keys(node).some((key) => !["type", "content"].includes(key))) throw new JiraTaskSourceError(`${issueKey}: unsupported Jira ADF bullet list`, "JIRA_ADF_UNSUPPORTED");
+      for (const item of node.content) {
+        if (!item || item.type !== "listItem" || !Array.isArray(item.content) || item.content.length !== 1 || Object.keys(item).some((key) => !["type", "content"].includes(key))) throw new JiraTaskSourceError(`${issueKey}: unsupported Jira ADF list item`, "JIRA_ADF_UNSUPPORTED");
+        const paragraph = item.content[0];
+        if (!paragraph || paragraph.type !== "paragraph" || !Array.isArray(paragraph.content) || paragraph.content.length !== 1 || Object.keys(paragraph).some((key) => !["type", "content"].includes(key))) throw new JiraTaskSourceError(`${issueKey}: unsupported Jira ADF list paragraph`, "JIRA_ADF_UNSUPPORTED");
+        lines.push(`- ${adfTextNode(paragraph.content[0], issueKey)}`);
+      }
+    } else throw new JiraTaskSourceError(`${issueKey}: unsupported Jira ADF node type ${node.type ?? "unknown"}`, "JIRA_ADF_UNSUPPORTED");
+  }
+  return lines.join("\n");
+}
+
 export class JiraTaskSourceError extends Error {
   constructor(message, code = "JIRA_TASK_SOURCE_ERROR", classification = "INVARIANT_VIOLATION") {
     super(message);
@@ -192,9 +218,14 @@ export function mapIssueToTask(issue, config) {
   const rawStatus = fields.status?.name;
   const completed = mapStatus(rawStatus, config.statusMapping);
   const summary = typeof fields.summary === "string" && fields.summary.trim() !== "" ? fields.summary.trim() : key;
+  const descriptionText = typeof fields.description === "string"
+    ? fields.description
+    : fields.description && typeof fields.description === "object"
+      ? normalizeAdfDescription(fields.description, key)
+      : null;
   const acceptanceCriteria = parseAcceptanceCriteria({
     issueKey: key,
-    descriptionText: typeof fields.description === "string" ? fields.description : null,
+    descriptionText,
     customFieldText: config.acFieldId ? fields[config.acFieldId] ?? null : null,
     acSource: config.acSource,
   });
@@ -244,32 +275,38 @@ export class JiraTaskSystemAdapter extends TaskSystemAdapter {
     this.lastMetadata = new Map();
   }
 
-  search(startAt) {
+  search(nextPageToken = null) {
     const fields = ["summary", "status", "description", "issuelinks", ...(this.acFieldId ? [this.acFieldId] : [])].join(",");
     const query = new URLSearchParams({
       jql: `project = "${this.projectKey}" ORDER BY key ASC`,
-      startAt: String(startAt),
       maxResults: "100",
       fields,
     }).toString();
+    const pageQuery = nextPageToken === null ? query : `${query}&nextPageToken=${encodeURIComponent(nextPageToken)}`;
     const raw = call(this.transport, {
       site: this.site, scheme: this.scheme, email: this.#credentials.email, apiToken: this.#credentials.apiToken, timeoutMs: this.timeoutMs,
-      path: "search", query,
+      path: "search/jql", query: pageQuery,
     });
     return object(decodeJson(raw, "Jira issue search"), "Jira search response");
   }
 
   fetchAllIssues() {
     const issues = [];
-    let startAt = 0;
+    let nextPageToken = null;
+    const seenTokens = new Set();
     for (;;) {
-      const page = this.search(startAt);
+      const page = this.search(nextPageToken);
       if (!Array.isArray(page.issues)) throw new JiraAdapterError("Jira search response is missing an issues array", "JIRA_INVALID_SCHEMA", "EXTERNAL_BLOCK");
+      if (typeof page.isLast !== "boolean") throw new JiraAdapterError("Jira search response has malformed pagination", "JIRA_INVALID_SCHEMA", "EXTERNAL_BLOCK");
       issues.push(...page.issues);
       if (issues.length > MAX_ISSUES) throw new JiraAdapterError("Jira project exceeds the supported unpaginated safety limit", "JIRA_RESULT_LIMIT", "EXTERNAL_BLOCK");
-      const total = Number(page.total ?? issues.length);
-      startAt += page.issues.length;
-      if (page.issues.length === 0 || startAt >= total) break;
+      if (page.isLast) {
+        if (page.nextPageToken !== undefined && page.nextPageToken !== null) throw new JiraAdapterError("Jira search response has inconsistent final pagination", "JIRA_INVALID_SCHEMA", "EXTERNAL_BLOCK");
+        break;
+      }
+      if (page.issues.length === 0 || typeof page.nextPageToken !== "string" || page.nextPageToken === "" || seenTokens.has(page.nextPageToken)) throw new JiraAdapterError("Jira search response has malformed pagination", "JIRA_INVALID_SCHEMA", "EXTERNAL_BLOCK");
+      seenTokens.add(page.nextPageToken);
+      nextPageToken = page.nextPageToken;
     }
     return issues;
   }
