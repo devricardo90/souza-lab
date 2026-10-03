@@ -1,0 +1,28 @@
+[
+  {
+    "at": "2026-10-03T08:59:07.907Z",
+    "runId": "CP08MUS5UCQI",
+    "stage": "auth",
+    "op": "auth",
+    "http": 200
+  },
+  {
+    "at": "2026-10-03T08:59:10.300Z",
+    "runId": "CP08MUS5UCQI",
+    "stage": "discover",
+    "op": "discover",
+    "sprintFound": true
+  },
+  {
+    "at": "2026-10-03T09:00:05.153Z",
+    "runId": "CP08MUS5UCQI",
+    "stage": "create",
+    "op": "create",
+    "taskId": "CP08MUS5UCQI-1",
+    "issueKey": null,
+    "outcome": "FAILED_PERMANENT",
+    "errorCode": "AUTH_INVALID",
+    "http": 401,
+    "note": "POST /issue rejected 401 (also for an invalid body): token lacks create/write scope. No Jira object created."
+  }
+]

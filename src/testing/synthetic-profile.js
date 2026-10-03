@@ -51,7 +51,7 @@ export function buildSyntheticController(config, env = process.env, overrides = 
   const outboxStore = new SqliteOutboxStore({ path: join(dir, "outbox.sqlite"), clock });
   const controllerStore = new SqliteControllerStore({ path: join(dir, "controller.sqlite"), clock });
   const leaseProvider = new LocalExecutionLeaseProvider({ directory: join(dir, "leases"), clock, defaultTtlMs: timings.instanceLeaseTtlMs });
-  const jira = new JiraSyncClient({ site: config.jira.site, scheme: config.jira.scheme ?? "https", email: env.LOOP_JIRA_EMAIL, apiToken: env.LOOP_JIRA_API_TOKEN, timeoutMs: config.jira.timeoutMs ?? 5000 });
+  const jira = new JiraSyncClient({ mode: config.jira.mode ?? "classic", observation: config.jira.observation, cloudId: config.jira.mode === "scoped" ? env.LOOP_JIRA_CLOUD_ID : null, site: config.jira.site, gatewayHost: config.jira.gatewayHost, scheme: config.jira.scheme ?? "https", email: env.LOOP_JIRA_EMAIL, apiToken: env.LOOP_JIRA_API_TOKEN, timeoutMs: config.jira.timeoutMs ?? 5000 });
   const ownerId = config.ownerId ?? `controller-${process.pid}`;
   const relationship = config.jira.relationship === undefined ? SYNTHETIC_BLOCKS_RELATIONSHIP : config.jira.relationship; // explicit synthetic "Blocks" mapping; a real profile must supply its own
   const outboxExecutor = new JiraOutboxExecutor({ store: outboxStore, jira, workerId: ownerId, claimTtlMs: config.outboxClaimTtlMs ?? 60000, clock, relationship });

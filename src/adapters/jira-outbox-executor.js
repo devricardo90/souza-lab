@@ -25,7 +25,8 @@ import { parseMaterializationConfig } from "../materialize/jira-materialization.
  * JIRA_CREATE reconciles and verifies through the SAME pure reconcilePlan() used for decisions: a task
  * counts as materialized only when exactly one issue carries its LOOP_TASK_ID and its plan-owned
  * definition matches. A POST response alone is never proof.
- * Reserved, not implemented: JIRA_UPDATE, JIRA_SPRINT_ASSIGNMENT.
+ * JIRA_SPRINT_ASSIGNMENT reconciles by exact sprint membership and verifies membership after the write.
+ * Reserved, not implemented: JIRA_UPDATE.
  */
 
 const GLOBAL_BLOCK_CODES = new Set(["AUTH_INVALID", "AUTH_FORBIDDEN"]);
@@ -47,6 +48,15 @@ export function jiraTransitionOperation({ issueKey, executionId, doneStatusName,
     action: "JIRA_TRANSITION", targetSystem: "JIRA", targetObject: issueKey, taskId, executionId, sourceRevision, head,
     expectedPreviousState: expectedCurrentStatusNames ? { statusNames: expectedCurrentStatusNames } : null,
     desiredState: { statusName: doneStatusName, transitionName, computedState: "DONE" },
+  };
+}
+
+export function jiraSprintOperation({ issueKey, sprintId, taskId = issueKey, sourceRevision = null, head = null }) {
+  return {
+    operationId: deriveOperationId("JIRA_SPRINT_ASSIGNMENT", { issueKey, sprintId }),
+    action: "JIRA_SPRINT_ASSIGNMENT", targetSystem: "JIRA", targetObject: issueKey, taskId, executionId: null, sourceRevision, head,
+    expectedPreviousState: { sprintMember: false },
+    desiredState: { sprintId, issueKey },
   };
 }
 
@@ -121,6 +131,13 @@ function handlers(jira, clock, relationship) {
           ? { result: "CONFIRMED" } : { result: "UNCERTAIN", detail: "comment not rediscoverable after write" };
       },
     },
+    JIRA_SPRINT_ASSIGNMENT: {
+      reconcile: (op) => (jira.getSprintMembership(op.desiredState.sprintId).includes(op.targetObject) ? { state: "APPLIED" } : { state: "NOT_APPLIED" }),
+      async write(op, context) {
+        const outcome = await jira.assignToSprint(op.targetObject, op.desiredState.sprintId, context);
+        return outcome.assigned || outcome.alreadyMember ? { result: "CONFIRMED" } : { result: "UNCERTAIN", detail: "issue not a member of the sprint after assignment" };
+      },
+    },
     JIRA_TRANSITION: {
       reconcile(op) {
         const status = jira.getIssueStatusName(op.targetObject);
@@ -156,6 +173,7 @@ export class JiraOutboxExecutor {
 
   enqueueComment(input) { return this.store.enqueue(jiraCommentOperation(input)); }
   enqueueTransition(input) { return this.store.enqueue(jiraTransitionOperation(input)); }
+  enqueueSprintAssignment(input) { return this.store.enqueue(jiraSprintOperation(input)); }
 
   /** Enqueues an operation spec from the materialization layer. A changed payload under an existing id is reported, never duplicated. */
   enqueueMaterialization(spec) {
