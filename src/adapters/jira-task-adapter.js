@@ -1,7 +1,7 @@
 import { TaskSystemAdapter, makeTask } from "../core/contracts.js";
 import { resolveNextTask } from "./markdown-task-adapter.js";
 import { blockerOf, parseRelationshipConfig } from "../reconcile/jira-relationship.js";
-import { annotateError, classifyJiraFacts, isFacts, jiraCurlTransport, redact } from "./jira-transport.js";
+import { JIRA_MODES, annotateError, classifyJiraFacts, isFacts, jiraCurlTransport, redact } from "./jira-transport.js";
 
 /**
  * Read-only Jira task source. Maps Jira issues into the same canonical
@@ -255,14 +255,19 @@ export class JiraTaskSystemAdapter extends TaskSystemAdapter {
   constructor({
     site, email, apiToken, projectKey, statusMapping,
     relationship = null, acSource = "description", acFieldId = null,
-    timeoutMs = 15000, transport = defaultJiraTransport, scheme = "https",
+    timeoutMs = 15000, transport = defaultJiraTransport, scheme = "https", mode = "classic", cloudId = null, gatewayHost,
   } = {}) {
     super();
-    if (typeof site !== "string" || site.trim() === "") throw new TypeError("Jira site is required");
+    if (!JIRA_MODES.includes(mode)) throw new TypeError(`Jira mode must be one of ${JIRA_MODES.join(", ")}`);
+    if (mode === "scoped") { if (typeof cloudId !== "string" || cloudId.trim() === "") throw new TypeError("Jira cloudId is required for scoped mode"); }
+    else if (typeof site !== "string" || site.trim() === "") throw new TypeError("Jira site is required");
     if (typeof projectKey !== "string" || !/^[A-Z][A-Z0-9]*$/.test(projectKey)) throw new TypeError("Jira projectKey is required");
     if (!statusMapping || typeof statusMapping !== "object") throw new TypeError("Jira statusMapping is required");
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new TypeError("timeoutMs must be positive");
-    this.site = site;
+    this.site = site ?? null;
+    this.mode = mode;
+    this.cloudId = cloudId;
+    this.gatewayHost = gatewayHost;
     this.scheme = scheme;
     this.#credentials = Object.freeze({ email, apiToken });
     this.projectKey = projectKey;
@@ -284,6 +289,7 @@ export class JiraTaskSystemAdapter extends TaskSystemAdapter {
     }).toString();
     const pageQuery = nextPageToken === null ? query : `${query}&nextPageToken=${encodeURIComponent(nextPageToken)}`;
     const raw = call(this.transport, {
+      mode: this.mode, cloudId: this.cloudId, gatewayHost: this.gatewayHost,
       site: this.site, scheme: this.scheme, email: this.#credentials.email, apiToken: this.#credentials.apiToken, timeoutMs: this.timeoutMs,
       path: "search/jql", query: pageQuery,
     });

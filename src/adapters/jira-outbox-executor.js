@@ -25,7 +25,8 @@ import { parseMaterializationConfig } from "../materialize/jira-materialization.
  * JIRA_CREATE reconciles and verifies through the SAME pure reconcilePlan() used for decisions: a task
  * counts as materialized only when exactly one issue carries its LOOP_TASK_ID and its plan-owned
  * definition matches. A POST response alone is never proof.
- * Reserved, not implemented: JIRA_UPDATE, JIRA_SPRINT_ASSIGNMENT.
+ * JIRA_SPRINT_ASSIGNMENT reconciles by exact sprint membership and verifies membership after the write.
+ * Reserved, not implemented: JIRA_UPDATE.
  */
 
 const GLOBAL_BLOCK_CODES = new Set(["AUTH_INVALID", "AUTH_FORBIDDEN"]);
@@ -50,6 +51,15 @@ export function jiraTransitionOperation({ issueKey, executionId, doneStatusName,
   };
 }
 
+export function jiraSprintOperation({ issueKey, sprintId, taskId = issueKey, sourceRevision = null, head = null }) {
+  return {
+    operationId: deriveOperationId("JIRA_SPRINT_ASSIGNMENT", { issueKey, sprintId }),
+    action: "JIRA_SPRINT_ASSIGNMENT", targetSystem: "JIRA", targetObject: issueKey, taskId, executionId: null, sourceRevision, head,
+    expectedPreviousState: { sprintMember: false },
+    desiredState: { sprintId, issueKey },
+  };
+}
+
 /** Builds the single-task desired snapshot a JIRA_CREATE operation was approved against. */
 function createView(op, clock, jira, relationship) {
   const config = parseMaterializationConfig(op.desiredState); // CONFIG_INVALID fails closed before any remote call
@@ -58,9 +68,9 @@ function createView(op, clock, jira, relationship) {
     documentId: m.sourceDocumentId, planVersion: m.planVersion, contentHash: m.snapshotContentHash,
     tasks: [{ taskId: m.taskId, title: m.title, epicId: m.epicId, dependsOn: m.dependsOn, acceptanceCriteria: m.acceptanceCriteria, taskHash: m.taskHash }],
   };
-  const observe = () => normalizeJiraObservation(jira.observeProject(config.projectKey), { relationship });
-  const decide = () => {
-    const result = reconcilePlan({ snapshot, observation: observe(), createdAt: clock() });
+  const observe = (include = []) => normalizeJiraObservation(jira.observeProject(config.projectKey, { include }), { relationship });
+  const decide = (include = []) => {
+    const result = reconcilePlan({ snapshot, observation: observe(include), createdAt: clock() });
     return [...result.creates, ...result.noops, ...result.conflicts][0];
   };
   return { config, m, decide, observe };
@@ -105,8 +115,9 @@ function handlers(jira, clock, relationship) {
           dependentKey = created.key;
         }
         for (const blockerKey of blockerKeys) await jira.linkIssues({ blockerKey, dependentKey, relationship }, context);
-        // read-after-write: exactly one issue with this LOOP_TASK_ID and a matching plan-owned definition
-        const record = decide();
+        // read-after-write: exactly one issue with this LOOP_TASK_ID and a matching plan-owned definition. The key Jira just
+        // returned is read canonically (never only through an index that may lag), so a created issue cannot look absent.
+        const record = decide([dependentKey]);
         if (record.decision === "NOOP") return { result: "CONFIRMED", issueKey: record.jiraIssueKey };
         if (record.decision === "CREATE") return { result: "UNCERTAIN", detail: "no issue carrying the LOOP_TASK_ID found after create" };
         return { result: "CONFLICT", code: record.reasonCode, detail: `${record.reasonCode}${record.jiraIssueKeys ? ` (${record.jiraIssueKeys.join(", ")})` : ""}` };
@@ -119,6 +130,13 @@ function handlers(jira, clock, relationship) {
         // read-after-write: the comment must be rediscoverable by its marker
         return jira.findMarkedComment(op.targetObject, op.desiredState.marker)
           ? { result: "CONFIRMED" } : { result: "UNCERTAIN", detail: "comment not rediscoverable after write" };
+      },
+    },
+    JIRA_SPRINT_ASSIGNMENT: {
+      reconcile: (op) => (jira.getSprintMembership(op.desiredState.sprintId).includes(op.targetObject) ? { state: "APPLIED" } : { state: "NOT_APPLIED" }),
+      async write(op, context) {
+        const outcome = await jira.assignToSprint(op.targetObject, op.desiredState.sprintId, context);
+        return outcome.assigned || outcome.alreadyMember ? { result: "CONFIRMED" } : { result: "UNCERTAIN", detail: "issue not a member of the sprint after assignment" };
       },
     },
     JIRA_TRANSITION: {
@@ -156,6 +174,7 @@ export class JiraOutboxExecutor {
 
   enqueueComment(input) { return this.store.enqueue(jiraCommentOperation(input)); }
   enqueueTransition(input) { return this.store.enqueue(jiraTransitionOperation(input)); }
+  enqueueSprintAssignment(input) { return this.store.enqueue(jiraSprintOperation(input)); }
 
   /** Enqueues an operation spec from the materialization layer. A changed payload under an existing id is reported, never duplicated. */
   enqueueMaterialization(spec) {

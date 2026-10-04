@@ -22,7 +22,7 @@ export async function startMock() {
     port, control, stop: () => server.kill(),
     reset: () => control({ reset: true, legacySearch: false }),
     log: () => get("/__log"),
-    issues: async () => (await get("/rest/api/3/search?maxResults=100")).issues,
+    issues: async () => (await get("/rest/api/3/search/jql?maxResults=100")).issues,
     posts: async (pattern) => (await get("/__log")).filter((e) => e.method === "POST" && pattern.test(e.path)).length,
     outage: (status = 503) => control({ override: { pathIncludes: "/rest/api", status, body: {}, times: 100000 } }),
     restore: () => control({ clearOverrides: true }),

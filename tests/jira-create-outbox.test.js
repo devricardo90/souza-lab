@@ -44,7 +44,7 @@ const control = (payload) => fetch(`http://127.0.0.1:${port}/__control`, { metho
 const override = (o) => control({ override: o });
 const requestLog = () => fetch(`http://127.0.0.1:${port}/__log`, { headers: { connection: "close" } }).then((r) => r.json());
 const createPosts = async () => (await requestLog()).filter((e) => e.method === "POST" && /\/rest\/api\/3\/issue$/.test(e.path)).length;
-const remoteIssues = async () => (await (await fetch(`http://127.0.0.1:${port}/rest/api/3/search?maxResults=100`, { headers: { connection: "close" } })).json()).issues;
+const remoteIssues = async () => (await (await fetch(`http://127.0.0.1:${port}/rest/api/3/search/jql?maxResults=100`, { headers: { connection: "close" } })).json()).issues;
 
 const openStore = (clock) => { const s = new SqliteOutboxStore({ path: dbPath, ...(clock ? { clock } : {}) }); opened.push(s); return s; };
 const jiraClient = () => new JiraSyncClient({ site: `127.0.0.1:${port}`, scheme: "http", email: "t@example.invalid", apiToken: "create-test-token-0123456789", timeoutMs: 2500 });
@@ -110,10 +110,10 @@ test("the order is reconcile -> create -> verify: the existing issue is read bef
   exec.enqueueMaterialization(op);
   await exec.process(op.operationId);
   const sequence = (await requestLog()).map((e) => `${e.method} ${e.path.split("?")[0].replace("/rest/api/3/", "")}`);
-  assert.deepEqual(sequence.filter((s) => s !== "GET search").length, 1);
+  assert.deepEqual(sequence.filter((s) => s !== "GET search/jql").length, 1);
   const postAt = sequence.indexOf("POST issue");
-  assert.ok(sequence.slice(0, postAt).includes("GET search"), "remote state is read before the write");
-  assert.ok(sequence.slice(postAt + 1).includes("GET search"), "remote state is read after the write");
+  assert.ok(sequence.slice(0, postAt).includes("GET search/jql"), "remote state is read before the write");
+  assert.ok(sequence.slice(postAt + 1).includes("GET search/jql"), "remote state is read after the write");
 });
 
 test("duplicate enqueue across repeated decisions: one operation, one remote issue", async () => {
@@ -211,7 +211,7 @@ test("duplicate remote TASK_ID produced by the create itself (concurrent outside
   exec.enqueueMaterialization(op);
   // a foreign writer also created a marked issue between our reconcile and our verification
   await control({ seedIssue: loopMarkedIssue("LOOP-1") });
-  await override({ method: "GET", pathIncludes: "/search", status: 200, body: { total: 0, issues: [] } }); // our reconcile read sees nothing
+  await override({ method: "GET", pathIncludes: "/search", status: 200, body: { isLast: true, issues: [] } }); // our reconcile read sees nothing
   const result = await exec.process(op.operationId);
   assert.equal(result.outcome, "CONFLICT");
   assert.equal(result.operation.lastErrorCode, "DUPLICATE_TASK_ID_REMOTE");

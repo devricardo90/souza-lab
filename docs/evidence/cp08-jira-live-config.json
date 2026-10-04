@@ -1,0 +1,188 @@
+{
+  "transport": {
+    "mode": "scoped",
+    "cloudIdEnv": "LOOP_JIRA_CLOUD_ID",
+    "observation": {
+      "source": "board",
+      "boardId": 199
+    },
+    "observationReason": "token lacks search scopes (GET search, search/jql, POST search/jql => 401)"
+  },
+  "project": {
+    "key": "LOOP",
+    "id": "10198",
+    "name": "Souza Loop Test"
+  },
+  "board": {
+    "id": 199,
+    "name": "LOOP board",
+    "type": "scrum"
+  },
+  "issueTypes": [
+    {
+      "id": "10000",
+      "name": "Epic",
+      "subtask": false
+    },
+    {
+      "id": "10037",
+      "name": "História",
+      "subtask": false
+    },
+    {
+      "id": "10228",
+      "name": "Subtarefa",
+      "subtask": true
+    },
+    {
+      "id": "10229",
+      "name": "Bug",
+      "subtask": false
+    },
+    {
+      "id": "10230",
+      "name": "Tarefa",
+      "subtask": false
+    }
+  ],
+  "taskIssueType": {
+    "id": "10230",
+    "name": "Tarefa"
+  },
+  "createFields": [
+    {
+      "id": "assignee",
+      "name": "Responsável",
+      "required": false
+    },
+    {
+      "id": "attachment",
+      "name": "Anexo",
+      "required": false
+    },
+    {
+      "id": "components",
+      "name": "Componentes",
+      "required": false
+    },
+    {
+      "id": "customfield_10001",
+      "name": "Team",
+      "required": false
+    },
+    {
+      "id": "customfield_10015",
+      "name": "Data de início",
+      "required": false
+    },
+    {
+      "id": "customfield_10020",
+      "name": "Sprint",
+      "required": false
+    },
+    {
+      "id": "description",
+      "name": "Descrição",
+      "required": false
+    },
+    {
+      "id": "duedate",
+      "name": "Data limite",
+      "required": false
+    },
+    {
+      "id": "fixVersions",
+      "name": "Versões corrigidas",
+      "required": false
+    },
+    {
+      "id": "issuelinks",
+      "name": "Itens associados",
+      "required": false
+    },
+    {
+      "id": "issuetype",
+      "name": "Tipo de item",
+      "required": true
+    },
+    {
+      "id": "labels",
+      "name": "Categorias",
+      "required": false
+    },
+    {
+      "id": "parent",
+      "name": "Pai",
+      "required": false
+    },
+    {
+      "id": "priority",
+      "name": "Prioridade",
+      "required": false
+    },
+    {
+      "id": "project",
+      "name": "Projeto",
+      "required": true
+    },
+    {
+      "id": "summary",
+      "name": "Resumo",
+      "required": true
+    }
+  ],
+  "linkTypes": [
+    {
+      "id": "10000",
+      "name": "Blocks",
+      "inward": "is blocked by",
+      "outward": "blocks"
+    },
+    {
+      "id": "10001",
+      "name": "Cloners",
+      "inward": "is cloned by",
+      "outward": "clones"
+    },
+    {
+      "id": "10002",
+      "name": "Duplicate",
+      "inward": "is duplicated by",
+      "outward": "duplicates"
+    },
+    {
+      "id": "10003",
+      "name": "Relates",
+      "inward": "relates to",
+      "outward": "relates to"
+    }
+  ],
+  "relationship": {
+    "linkTypeName": "Blocks",
+    "linkTypeId": "10000",
+    "inwardLabel": "is blocked by",
+    "outwardLabel": "blocks",
+    "dependentEnd": "outward"
+  },
+  "sprint": {
+    "id": 137,
+    "name": "CP08 Test",
+    "state": "future",
+    "originBoardId": 199
+  },
+  "sprintMatches": 1,
+  "completion": {
+    "transitionName": "Feito",
+    "doneStatusName": "Feito",
+    "fromStatusName": "A fazer",
+    "transitionId": "31",
+    "toStatusId": "10219"
+  },
+  "initialStatus": {
+    "id": "10217",
+    "name": "A fazer"
+  },
+  "provenance": {
+    "note": "Added in the post-review fix commit. Everything above was written by scripts/cp08-live-jira.js stages `discover` and `transition` from live responses. `transport.observationReason` is the author's explanation: the search-endpoint 401s it cites were seen in console output only and are not recorded in the ledger. See docs/evidence/CP-08-JIRA-LIVE-STATUS.md, section 'Evidence provenance'."
+  }
+}

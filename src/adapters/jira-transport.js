@@ -26,6 +26,11 @@ const CONFIG_CURL_EXITS = new Set([1, 2, 3, 4, 27]);
 const SITE = /^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:\d{1,5})?$|^\[::1\](:\d{1,5})?$/;
 const PATH = /^[A-Za-z0-9\-._~%/:@!$&'()*+,;=?]+$/;
 const LOOPBACK = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/;
+const CLOUD_ID = /^[A-Za-z0-9][A-Za-z0-9-]{7,63}$/;
+
+export const JIRA_MODES = Object.freeze(["classic", "scoped"]);
+export const JIRA_APIS = Object.freeze({ platform: "rest/api/3", agile: "rest/agile/1.0" });
+export const SCOPED_GATEWAY_HOST = "api.atlassian.com";
 
 export function redact(value) {
   return String(value ?? "")
@@ -43,15 +48,39 @@ function cfgQuote(text) {
 
 /** Pure function: everything that is safe to place in argv, plus the stdin
  * config (the only place a secret appears). Exported for the argv proof. */
-export function buildCurlInvocation({ site, scheme = "https", email, apiToken, path, query = "", method = "GET", body = null, timeoutMs = 15000, nonce }) {
-  if (typeof site !== "string" || !SITE.test(site)) throw new TypeError("Jira site is invalid");
-  if (scheme !== "https" && !(scheme === "http" && LOOPBACK.test(site))) throw new TypeError("Jira scheme must be https (http only for loopback)");
+/**
+ * Explicit routing, never inferred from the token:
+ *   classic  https://<site>/rest/api/3/<path>                                (site required)
+ *   scoped   https://api.atlassian.com/ex/jira/<cloudId>/rest/api/3/<path>   (cloudId required; `site` unused)
+ * `api` selects the REST family ("platform" = rest/api/3, "agile" = rest/agile/1.0) in either mode.
+ * The scoped gateway host is only overridable (`gatewayHost`) to a loopback address, for tests.
+ */
+export function jiraBaseUrl({ mode = "classic", site, scheme = "https", cloudId, gatewayHost = SCOPED_GATEWAY_HOST, api = "platform" }) {
+  if (!JIRA_MODES.includes(mode)) throw new TypeError(`Jira mode must be one of ${JIRA_MODES.join(", ")}`);
+  if (!(api in JIRA_APIS)) throw new TypeError("Jira api family is invalid");
+  let host;
+  let prefix = "";
+  if (mode === "scoped") {
+    if (typeof cloudId !== "string" || !CLOUD_ID.test(cloudId)) throw new TypeError("Jira cloudId is required for scoped mode");
+    if (typeof gatewayHost !== "string" || !SITE.test(gatewayHost) || (gatewayHost !== SCOPED_GATEWAY_HOST && !LOOPBACK.test(gatewayHost))) throw new TypeError("Jira scoped gateway host is invalid");
+    host = gatewayHost;
+    prefix = `/ex/jira/${cloudId}`;
+  } else {
+    if (typeof site !== "string" || !SITE.test(site)) throw new TypeError("Jira site is invalid");
+    host = site;
+  }
+  if (scheme !== "https" && !(scheme === "http" && LOOPBACK.test(host))) throw new TypeError("Jira scheme must be https (http only for loopback)");
+  return `${scheme}://${host}${prefix}/${JIRA_APIS[api]}/`;
+}
+
+export function buildCurlInvocation({ mode = "classic", site, cloudId, gatewayHost, api = "platform", scheme = "https", email, apiToken, path, query = "", method = "GET", body = null, timeoutMs = 15000, nonce }) {
+  const base = jiraBaseUrl({ mode, site, scheme, cloudId, gatewayHost, api });
   if (typeof email !== "string" || email.trim() === "" || /[\r\n"]/.test(email)) throw new TypeError("Jira email is required");
   if (typeof apiToken !== "string" || apiToken.trim() === "" || /[\r\n]/.test(apiToken)) throw new TypeError("Jira API token is required");
   if (typeof path !== "string" || !PATH.test(path)) throw new TypeError("Jira request path is invalid");
   if (!["GET", "POST", "PUT", "DELETE"].includes(method)) throw new TypeError("Jira request method is invalid");
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new TypeError("timeoutMs must be positive");
-  const url = `${scheme}://${site}/rest/api/3/${path}${query ? `?${query}` : ""}`;
+  const url = `${base}${path}${query ? `?${query}` : ""}`;
   const basic = Buffer.from(`${email}:${apiToken}`, "utf8").toString("base64");
   const config = [
     `header = ${cfgQuote(`Authorization: Basic ${basic}`)}`,
