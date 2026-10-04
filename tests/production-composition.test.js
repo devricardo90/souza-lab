@@ -9,7 +9,7 @@ const PRODUCTION_FILES = [
   "../src/controller/execution-runner.js", "../src/controller/runtime-assembly.js", "../src/controller/loop-controller.js",
   "../src/adapters/git-push.js", "../src/adapters/git-workspace.js", "../src/adapters/sqlite-gate-fact-store.js",
   "../src/adapters/sqlite-execution-attempt-store.js", "../src/adapters/workspace-command-validator.js",
-  "../src/adapters/github-scm-provider.js", "../src/adapters/github-ci-provider.js", "../src/adapters/local-git-provider.js",
+  "../src/adapters/github-scm-provider.js", "../src/adapters/github-ci-provider.js", "../src/adapters/local-git-provider.js", "../src/adapters/hermes-agent-executor.js",
 ];
 const code = (file) => readFileSync(new URL(file, import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 
