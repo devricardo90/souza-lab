@@ -23,7 +23,7 @@ function issue({ key = "LOOP-1", status = "To Do", summary = "Task", description
 }
 
 function searchResponse(issues) {
-  return JSON.stringify({ issues, total: issues.length, startAt: 0, maxResults: 100 });
+  return JSON.stringify({ issues, isLast: true, nextPageToken: null });
 }
 
 function adapter({ transport, ...overrides } = {}) {
@@ -122,6 +122,34 @@ test("J20 canonical resolution is requested in explicit key order, independent o
   });
   jira.listTasks();
   assert.match(new URLSearchParams(capturedQuery).get("jql"), /ORDER BY key ASC/);
+});
+
+test("ADF description normalizes paragraphs and bullet Acceptance Criteria", () => {
+  const description = {
+    type: "doc", version: 1, content: [
+      { type: "paragraph", content: [{ type: "text", text: "Some prose." }] },
+      { type: "paragraph", content: [{ type: "text", text: "Acceptance Criteria" }] },
+      { type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "AC-001: condition" }] }] }] },
+    ],
+  };
+  const result = mapIssueToTask(issue({ description }), { statusMapping: STATUS_MAPPING, projectKey: PROJECT, site: SITE, acSource: "description" });
+  assert.deepEqual(result.task.acceptanceCriteria, [{ id: "AC-001", description: "condition" }]);
+});
+
+test("unsupported ADF description fails closed", () => {
+  const description = { type: "doc", version: 1, content: [{ type: "codeBlock", content: [{ type: "text", text: "unsafe" }] }] };
+  assert.throws(() => mapIssueToTask(issue({ description }), { statusMapping: STATUS_MAPPING, projectKey: PROJECT, site: SITE, acSource: "description" }), { code: "JIRA_ADF_UNSUPPORTED" });
+});
+
+test("enhanced search pagination requires a valid nextPageToken", () => {
+  let calls = 0;
+  const jira = adapter({ transport: (request) => {
+    calls += 1;
+    assert.equal(request.path, "search/jql");
+    return calls === 1 ? JSON.stringify({ issues: [issue({ description: AC_BLOCK })], isLast: false, nextPageToken: "page-2" }) : JSON.stringify({ issues: [], isLast: true });
+  } });
+  assert.equal(jira.listTasks().length, 1);
+  assert.equal(calls, 2);
 });
 
 test("custom-field acceptance criteria source is honored when configured", () => {
