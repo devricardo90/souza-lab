@@ -130,7 +130,7 @@ no ledger entry has been added for them, and a reader should treat them as the a
   owned issue from reconciliation (canonical `include` + frontier reads), but the frontier read assumes consecutive project
   keys: a gap (an issue deleted or moved away) ends the probe early, and more than 25 unindexed issues fails closed. Issues that
   the board's own filter excludes remain invisible to enumeration.
-- Production search mode still uses the deprecated `GET /rest/api/3/search`; moving it to `search/jql` is outside CP-08.
+- Reconciliation with main (after PR #1): production search mode of `JiraSyncClient` now uses `GET search/jql` with `nextPageToken`/`isLast` pagination, matching `JiraTaskSystemAdapter`. This was verified OFFLINE only (mock server and stubs); the live CP-08 run used board observation and never exercised search mode, so search/jql is not live-proven by this evidence. The ledger is unchanged.
 - Same-outbox repeat of the first create reports `NOT_OWNER` because that outbox row is the terminal CONFLICT from the
   pre-fix attempt; the fresh-outbox repeat (the stronger lost-outbox case) reports CONFIRMED with 0 writes (both console-only observations, see provenance).
 

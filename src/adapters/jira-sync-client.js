@@ -124,15 +124,18 @@ export class JiraSyncClient {
     const fields = "summary,status,description,issuelinks,parent,issuetype";
     if (this.observation.source === "board") return this.observeBoard(projectKey, { pageSize, maxIssues, fields, include });
     const issues = [];
-    let startAt = 0;
+    let token = null;
+    const seen = new Set();
     for (;;) {
-      const query = new URLSearchParams({ jql: `project = "${projectKey}" ORDER BY key ASC`, startAt: String(startAt), maxResults: String(pageSize), fields }).toString();
-      const page = this.request(`search?${query}`);
+      const base = new URLSearchParams({ jql: `project = "${projectKey}" ORDER BY key ASC`, maxResults: String(pageSize), fields }).toString();
+      const page = this.request(`search/jql?${token === null ? base : `${base}&nextPageToken=${encodeURIComponent(token)}`}`);
       if (!page || !Array.isArray(page.issues)) throw new JiraSyncError("Jira search response is missing an issues array", "INVALID_RESPONSE", "EXTERNAL_BLOCK");
+      if (typeof page.isLast !== "boolean") throw new JiraSyncError("Jira search response has malformed pagination", "INVALID_RESPONSE", "EXTERNAL_BLOCK");
       issues.push(...page.issues);
       if (issues.length > maxIssues) throw new JiraSyncError("Jira project exceeds the supported scan limit", "INVALID_RESPONSE", "EXTERNAL_BLOCK");
-      startAt += page.issues.length;
-      if (page.issues.length === 0 || startAt >= Number(page.total ?? issues.length)) break;
+      if (page.isLast) break;
+      if (page.issues.length === 0 || typeof page.nextPageToken !== "string" || page.nextPageToken === "" || seen.has(page.nextPageToken)) throw new JiraSyncError("Jira search response has malformed pagination", "INVALID_RESPONSE", "EXTERNAL_BLOCK");
+      seen.add(page.nextPageToken); token = page.nextPageToken;
     }
     return issues;
   }

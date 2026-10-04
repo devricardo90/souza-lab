@@ -54,7 +54,7 @@ class JiraFixture {
   transport = () => {
     this.searchCalls += 1;
     const issues = this.issues();
-    return JSON.stringify({ issues, total: issues.length, startAt: 0, maxResults: 100 });
+    return JSON.stringify({ issues, isLast: true, nextPageToken: null });
   };
 }
 

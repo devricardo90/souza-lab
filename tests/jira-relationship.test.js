@@ -92,7 +92,7 @@ const cleanup = () => { for (const s of opened.splice(0)) { try { s.close(); } c
 after(() => { server.kill(); cleanup(); });
 beforeEach(async () => { cleanup(); dir = mkdtempSync(join(tmpdir(), "rel-")); await control({ reset: true, legacySearch: false }); });
 const control = (payload) => fetch(`http://127.0.0.1:${port}/__control`, { method: "POST", body: JSON.stringify(payload), headers: { connection: "close" } }).then((r) => r.json());
-const issues = async () => (await (await fetch(`http://127.0.0.1:${port}/rest/api/3/search?maxResults=100`, { headers: { connection: "close" } })).json()).issues;
+const issues = async () => (await (await fetch(`http://127.0.0.1:${port}/rest/api/3/search/jql?maxResults=100`, { headers: { connection: "close" } })).json()).issues;
 const posts = async (re) => (await (await fetch(`http://127.0.0.1:${port}/__log`, { headers: { connection: "close" } })).json()).filter((e) => e.method === "POST" && re.test(e.path)).length;
 const client = () => new JiraSyncClient({ site: `127.0.0.1:${port}`, scheme: "http", email: "r@example.invalid", apiToken: "relationship-test-token-0123456789", timeoutMs: 2500 });
 const executor = (relationship) => { const store = new SqliteOutboxStore({ path: join(dir, "o.sqlite") }); opened.push(store); return new JiraOutboxExecutor({ store, jira: client(), workerId: "w", relationship }); };

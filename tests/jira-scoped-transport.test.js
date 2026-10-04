@@ -107,3 +107,26 @@ test("sprint assignment: exact membership, idempotent by membership, executed th
   assert.equal((await fresh.process(spec.operationId)).outcome, "CONFIRMED");
   assert.equal(writes.length, 1, "exactly one sprint write across repeats and a lost outbox");
 });
+
+// ---------- Reconciliation with main (PR #1): production search mode uses enhanced search (search/jql + nextPageToken) ----------
+test("search mode scans via GET search/jql with nextPageToken pagination and never the removed /search endpoint", () => {
+  const paths = [];
+  const pages = [{ issues: [{ key: "LOOP-1" }], isLast: false, nextPageToken: "t2" }, { issues: [{ key: "LOOP-2" }], isLast: true }];
+  const client = new JiraSyncClient({ mode: "scoped", cloudId: CLOUD, email: EMAIL, apiToken: TOKEN, transport: (r) => { paths.push(r.path); return facts(pages[paths.length - 1]); } });
+  assert.deepEqual(client.observeProject("LOOP").map((i) => i.key), ["LOOP-1", "LOOP-2"]);
+  assert.ok(paths.every((p) => p.startsWith("search/jql?")) && !paths[0].includes("nextPageToken") && paths[1].includes("nextPageToken=t2"), paths.join(" | "));
+});
+
+test("search mode fails closed on malformed enhanced-search pagination (no isLast, missing/repeated token, empty non-final page)", () => {
+  const bad = [
+    [{ issues: [{ key: "LOOP-1" }], total: 1 }],
+    [{ issues: [{ key: "LOOP-1" }], isLast: false }],
+    [{ issues: [{ key: "LOOP-1" }], isLast: false, nextPageToken: "t" }, { issues: [{ key: "LOOP-2" }], isLast: false, nextPageToken: "t" }],
+    [{ issues: [], isLast: false, nextPageToken: "t" }],
+  ];
+  for (const pages of bad) {
+    let n = 0;
+    const client = new JiraSyncClient({ mode: "scoped", cloudId: CLOUD, email: EMAIL, apiToken: TOKEN, transport: () => facts(pages[Math.min(n++, pages.length - 1)]) });
+    assert.throws(() => client.observeProject("LOOP"), (e) => e.code === "INVALID_RESPONSE", JSON.stringify(pages));
+  }
+});
