@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { CommandIndependentReviewer } from "../src/adapters/command-independent-reviewer.js";
 
 /** Real child processes via node -e: deterministic, no model, no network. */
@@ -34,6 +37,21 @@ test("failure to produce an answer is UNAVAILABLE (a wait), never a verdict: mis
     reviewer(`process.stdout.write("x".repeat(2*1024*1024))`),
   ];
   for (const r of cases) assert.equal((await r.reviewImplementation(REQUEST)).verdict, "UNAVAILABLE");
+});
+
+test("on timeout the command is actually terminated, not just abandoned", async () => {
+  const pidFile = join(tmpdir(), `reviewer-pid-${process.pid}-${Date.now()}`);
+  const script = `require("fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(()=>{}, 1000);`;
+  try {
+    const out = await reviewer(script, { timeoutMs: 1500 }).reviewImplementation(REQUEST);
+    assert.equal(out.verdict, "UNAVAILABLE");
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    assert.ok(Number.isInteger(pid) && pid > 0);
+    const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    const deadline = Date.now() + 5000;
+    while (alive() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+    assert.ok(!alive(), "the timed-out reviewer process was killed");
+  } finally { rmSync(pidFile, { force: true }); }
 });
 
 test("a successful exit with invalid reviewer output fails closed instead of being treated as a verdict", async () => {

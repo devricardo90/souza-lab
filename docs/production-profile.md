@@ -17,7 +17,7 @@ The plan is read from a local file (`planSource.file`). Google Docs is not used 
 
 ## Configuration
 
-Every identity is explicit; nothing is defaulted to a project, path or fixture. Unknown keys and credential-looking keys are rejected. Validation runs before any state is created.
+Every identity is explicit; nothing is defaulted to a project, path or fixture. Unknown keys (at every level) and credential-looking keys are rejected, and every optional value is type- and range-checked. Validation runs before any state is created. At startup the plan file, the local clone and the `agent`, `validation` and `review` executables must exist, or the process exits 78. `jira.scheme` defaults to `https`; plain `http` is accepted only for a loopback host (for example a local mock or proxy), so credentials never cross a network in cleartext. `review.command` must not be the same executable as `agent.command`. Optional `passEnv` lists extra environment variable names that validation and review commands may inherit (never `LOOP_JIRA_*`).
 
 ```jsonc
 {
@@ -53,11 +53,11 @@ Every identity is explicit; nothing is defaulted to a project, path or fixture. 
 | `LOOP_JIRA_API_TOKEN` | yes | Jira API token |
 | `LOOP_JIRA_CLOUD_ID` | scoped mode | Jira cloud id |
 
-`validation.command`, `review.command` and `agent.command` are executed as an argv without a shell, so name a real executable (on Windows, for example, `node` or a full path rather than an `npm.cmd` shim). GitHub access uses the authenticated `gh` CLI of the process owner. Validation and review commands receive an environment with every credential-looking variable and all `LOOP_JIRA_*` variables removed. Log output is scrubbed of the values of credential-looking environment variables.
+`validation.command`, `review.command` and `agent.command` are executed as an argv without a shell, so name a real executable (on Windows, for example, `node` or a full path rather than an `npm.cmd` shim). GitHub access uses the authenticated `gh` CLI of the process owner. Validation and review commands receive an allowlisted environment (`PATH`, `PATHEXT`, home and temp directories, Windows system variables, locale and a few similar names) plus only the names listed in `passEnv`; every other variable, including all `LOOP_JIRA_*` and any ambient credential, is not passed on. Log output is scrubbed of the values of credential-looking environment variables (matched by name), of every `LOOP_JIRA_*` variable and of every `passEnv` name, in raw and JSON-escaped forms.
 
 ## Review command contract
 
-`review.command` receives one JSON request on stdin (`kind: "spec" | "implementation"`, the work package, and for implementations `head`, `base`, `workspacePath`, `authorId`, `changedFiles`) and prints one JSON object on stdout: `{ "verdict": "CLEAN" | "FINDINGS", "reviewerId": "...", "findings": [{ "id", "summary" }] }`. A command that cannot run, exits non-zero, times out or prints oversized output is treated as UNAVAILABLE (a wait), never as a verdict; exit 0 with invalid output fails closed. `reviewerId` must differ from the commit author; the state engine and merge gate enforce this.
+`review.command` receives one JSON request on stdin (`kind: "spec" | "implementation"`, the work package, and for implementations `head`, `base`, `workspacePath`, `authorId`, `changedFiles`) and prints one JSON object on stdout: `{ "verdict": "CLEAN" | "FINDINGS", "reviewerId": "...", "findings": [{ "id", "summary" }] }`. A command that cannot run, exits non-zero, times out or prints oversized output is treated as UNAVAILABLE (a wait), never as a verdict; exit 0 with invalid output fails closed. On timeout or oversized output the command and its child processes are terminated. Trust boundary: the state engine and merge gate require the declared `reviewerId` to differ from the commit author, but they cannot verify that the command is genuinely a different agent from the implementer. The profile only rejects an identical executable; choosing a truly independent reviewer is the Owner's responsibility.
 
 ## Scope and limits
 

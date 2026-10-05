@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { runControllerLoop } from "../src/controller/controller-process.js";
 import { buildControllerForProfile } from "../src/controller/profile-selector.js";
+import { scrubText, secretValues } from "../src/controller/log-redaction.js";
 
 /**
  * Standalone Controller process (run under systemd / Docker / any supervisor).
@@ -12,7 +13,7 @@ import { buildControllerForProfile } from "../src/controller/profile-selector.js
  * The profile is chosen EXPLICITLY by config.profile ("synthetic" | "production"). There is no default and no fallback: a missing,
  * unknown or invalid profile/configuration exits 78 and never degrades into synthetic mode (see src/controller/profile-selector.js).
  * "production" is the CP-09 composition (Jira + HermesAgentExecutor + Git/GitHub + command validator/reviewer; no Google required).
- * Logged text is scrubbed of the values of credential-looking environment variables.
+ * Logged text is scrubbed of the values of credential-looking environment variables (raw and JSON-escaped forms).
  */
 
 function parseArgs(argv) {
@@ -21,14 +22,13 @@ function parseArgs(argv) {
   return argv[index + 1];
 }
 
-const SECRET_NAME = /token|secret|password|passwd|api[-_]?key|credential|authorization/i;
-const secretValues = () => Object.entries(process.env).filter(([name, value]) => (SECRET_NAME.test(name) || /^LOOP_JIRA_/.test(name)) && typeof value === "string" && value.length >= 6).map(([, value]) => value);
-const scrub = (text) => secretValues().reduce((out, value) => out.split(value).join("[REDACTED]"), text);
-const log = (entry) => process.stdout.write(`${scrub(JSON.stringify(entry))}\n`);
+let passEnvNames = []; // names the owner explicitly passes to child processes (set once the config is read); their values are scrubbed too
+const log = (entry) => process.stdout.write(`${scrubText(JSON.stringify(entry), secretValues(process.env, passEnvNames))}\n`);
 
 let exitCode = 0;
 try {
   const config = JSON.parse(readFileSync(parseArgs(process.argv.slice(2)), "utf8"));
+  if (Array.isArray(config?.passEnv)) passEnvNames = config.passEnv.filter((n) => typeof n === "string");
   const { controller, close } = await buildControllerForProfile(config);
   const abort = new AbortController();
   for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => { log({ event: "signal", signal }); abort.abort(); });

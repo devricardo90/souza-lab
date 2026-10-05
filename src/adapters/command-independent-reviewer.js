@@ -1,8 +1,17 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { IndependentReviewer, validateReviewerOutput } from "../controller/gate-ports.js";
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
+const WINDOWS = process.platform === "win32";
 const UNAVAILABLE = Object.freeze({ verdict: "UNAVAILABLE", reviewerId: "command-reviewer-unavailable", findings: Object.freeze([]) });
+
+/** Terminates the command and everything it started (process group on POSIX, taskkill /T on Windows). Never throws. */
+function killTree(child) {
+  try {
+    if (WINDOWS) spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+    else process.kill(-child.pid, "SIGKILL");
+  } catch { try { child.kill(); } catch { /* already gone */ } }
+}
 
 /**
  * Production IndependentReviewer boundary that is agent-agnostic: one configured command (argv, no shell) receives a JSON
@@ -12,7 +21,9 @@ const UNAVAILABLE = Object.freeze({ verdict: "UNAVAILABLE", reviewerId: "command
  *   command could not run / non-zero exit / timeout / oversized output  -> UNAVAILABLE (a transient wait, never a verdict)
  *   exit 0 but stdout is not valid reviewer output                      -> fails closed with REVIEWER_OUTPUT_INVALID
  *
- * Independence (reviewerId must differ from the commit author) is enforced downstream by the state engine and the merge gate.
+ * Trust boundary (explicit): the state engine and the merge gate compare the reviewer's DECLARED reviewerId with the commit
+ * author id. They cannot verify that the command is genuinely a different agent from the implementer. The production profile
+ * rejects a review command identical to the agent command, but choosing a truly independent reviewer is the Owner's responsibility.
  * stderr is never surfaced, so a reviewer command cannot leak secrets through this boundary.
  */
 export class CommandIndependentReviewer extends IndependentReviewer {
@@ -42,15 +53,26 @@ export class CommandIndependentReviewer extends IndependentReviewer {
   exchange(input) {
     return new Promise((resolve) => {
       let settled = false;
-      const done = (value) => { if (!settled) { settled = true; resolve(value); } };
-      let child;
-      try { child = this.spawnFn(this.command, [...this.args], { shell: false, windowsHide: true, env: this.env, stdio: ["pipe", "pipe", "ignore"] }); }
+      let child = null;
+      let timer = null;
+      const done = (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (value === null && child) killTree(child);
+        resolve(value);
+      };
+      try { child = this.spawnFn(this.command, [...this.args], { shell: false, windowsHide: true, detached: !WINDOWS, env: this.env, stdio: ["pipe", "pipe", "ignore"] }); }
       catch { return done(null); }
       const chunks = []; let size = 0;
-      const timer = setTimeout(() => { try { child.kill(); } catch {} done(null); }, this.timeoutMs);
-      child.on("error", () => { clearTimeout(timer); done(null); });
-      child.stdout.on("data", (chunk) => { size += chunk.length; if (size > MAX_OUTPUT_BYTES) { try { child.kill(); } catch {} clearTimeout(timer); done(null); } else chunks.push(chunk); });
-      child.on("close", (code) => { clearTimeout(timer); done(code === 0 ? Buffer.concat(chunks).toString("utf8") : null); });
+      timer = setTimeout(() => done(null), this.timeoutMs);
+      child.on("error", () => done(null));
+      child.stdout.on("data", (chunk) => {
+        if (settled) return;
+        size += chunk.length;
+        if (size > MAX_OUTPUT_BYTES) done(null); else chunks.push(chunk);
+      });
+      child.on("close", (code) => done(code === 0 ? Buffer.concat(chunks).toString("utf8") : null));
       child.stdin.on("error", () => {});
       child.stdin.end(input);
     });

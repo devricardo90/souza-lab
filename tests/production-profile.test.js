@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test, { after, before, beforeEach } from "node:test";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { BIN, ENV, TWO_TASKS, startMock, workspace } from "./helpers/controller-harness.js";
-import { runProcess } from "./helpers/controller-harness.js";
-import { buildProductionController, sanitizedEnv, validateProductionConfig, ProductionProfileError } from "../src/composition/production-profile.js";
+import { BIN, ENV, TWO_TASKS, runProcess, startMock, workspace } from "./helpers/controller-harness.js";
+import { buildProductionController, childEnvironment, executableExists, validateProductionConfig, ProductionProfileError } from "../src/composition/production-profile.js";
 import { buildControllerForProfile } from "../src/controller/profile-selector.js";
+import { scrubText, secretValues } from "../src/controller/log-redaction.js";
 import { JiraSyncClient } from "../src/adapters/jira-sync-client.js";
 import { JiraOutboxExecutor } from "../src/adapters/jira-outbox-executor.js";
 import { HermesAgentExecutor } from "../src/adapters/hermes-agent-executor.js";
@@ -23,13 +23,15 @@ import { SYNTHETIC_BLOCKS_RELATIONSHIP } from "../src/reconcile/jira-relationshi
  * (for the CLI tests) a local Jira mock and a child process. Live proof of the whole chain belongs to CP-10.
  */
 const SECRET = "sentinel-secret-value-9f8e7d6c5b4a";
-const PROD_ENV = Object.freeze({ LOOP_JIRA_EMAIL: "prod-test@example.invalid", LOOP_JIRA_API_TOKEN: SECRET });
+const PATH_ENV = Object.fromEntries(["PATH", "Path", "PATHEXT"].filter((name) => process.env[name] !== undefined).map((name) => [name, process.env[name]]));
+const PROD_ENV = Object.freeze({ ...PATH_ENV, LOOP_JIRA_EMAIL: "prod-test@example.invalid", LOOP_JIRA_API_TOKEN: SECRET });
 let ws; let mock;
 before(async () => { mock = await startMock(); });
 after(() => { mock.stop(); });
 beforeEach(() => { if (ws) ws.cleanup(); ws = workspace(); ws.setPlan(TWO_TASKS()); });
 after(() => { if (ws) ws.cleanup(); });
 
+// Existing executables that are never invoked by these tests: the agent is the current node binary, the reviewer is "node" found on PATH.
 const prodConfig = (extra = {}, site = "jira.example.invalid") => ({
   profile: "production", workspaceDir: join(ws.dir, "state"), workspaceId: "ws-prod", documentId: "doc-prod",
   planSource: { file: ws.planFile },
@@ -41,19 +43,20 @@ const prodConfig = (extra = {}, site = "jira.example.invalid") => ({
   repository: { identity: "example/repo", baseRef: "main" },
   git: { repoPath: ws.dir },
   github: { owner: "example", repo: "repo", baseBranch: "main", workflowIdentity: ".github/workflows/validate.yml" },
-  agent: { kind: "hermes", command: "hermes", board: "board-x", coderAssignee: "coder-x" },
+  agent: { kind: "hermes", command: process.execPath, board: "board-x", coderAssignee: "coder-x" },
   validation: { command: process.execPath, args: ["-e", "process.exit(0)"] },
-  review: { command: process.execPath, args: ["-e", "process.exit(0)"] },
+  review: { command: "node", args: ["-e", "process.exit(0)"] },
   ...extra,
 });
 const clone = (value) => JSON.parse(JSON.stringify(value));
+const withJira = (patch) => ({ ...prodConfig(), jira: { ...prodConfig().jira, ...patch } });
 const build = (config = prodConfig(), env = PROD_ENV, overrides = {}) => buildProductionController(config, env, overrides);
 const rejects = (config, env = PROD_ENV, pattern = null) => {
-  assert.throws(() => validateProductionConfig(config, env), (error) => error instanceof ProductionProfileError && error.code === "CONFIG_INVALID" && (pattern === null || pattern.test(error.message)));
-  const before = existsSync(config?.workspaceDir ?? "") ? readdirSync(config.workspaceDir).length : 0;
+  assert.throws(() => validateProductionConfig(config, env), (error) => error instanceof ProductionProfileError && error.code === "CONFIG_INVALID" && (pattern === null || pattern.test(error.message)), `validate: ${pattern}`);
+  const dir = config && typeof config === "object" ? config.workspaceDir : null;
+  const existed = typeof dir === "string" ? existsSync(dir) : false;
   assert.throws(() => buildProductionController(config, env), (error) => error.code === "CONFIG_INVALID");
-  const after = existsSync(config?.workspaceDir ?? "") ? readdirSync(config.workspaceDir).length : 0;
-  assert.equal(after, before, "a rejected configuration must not create any state");
+  if (typeof dir === "string" && !existed) assert.ok(!existsSync(dir), "a rejected configuration must not create any state");
 };
 
 test("1. production composition builds with valid injected configuration", () => {
@@ -89,7 +92,7 @@ test("3. HermesAgentExecutor is the agent in production mode, shared by the runn
     assert.ok(built.agent instanceof HermesAgentExecutor);
     assert.equal(built.agent.board, "board-x");
     assert.equal(built.agent.coderAssignee, "coder-x");
-    assert.equal(built.agent.command, "hermes");
+    assert.equal(built.agent.command, process.execPath);
     assert.equal(built.executionRunner.agent, built.agent);
     assert.equal(built.lifecycle.agent, built.agent);
   } finally { built.close(); }
@@ -101,7 +104,7 @@ test("4. no synthetic executor, reviewer or validator is used in production mode
     assert.ok(!(built.agent instanceof SyntheticAgentExecutor) && !(built.agent instanceof SyntheticGitAgent));
     assert.ok(!(built.reviewer instanceof DeterministicReviewer) && !(built.validator instanceof DeterministicValidator));
   } finally { built.close(); }
-  for (const file of ["../src/composition/production-profile.js", "../src/adapters/command-independent-reviewer.js"]) {
+  for (const file of ["../src/composition/production-profile.js", "../src/adapters/command-independent-reviewer.js", "../src/controller/log-redaction.js"]) {
     const text = readFileSync(new URL(file, import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
     const imports = [...text.matchAll(/(?:from|import)\s*\(?\s*"([^"]+)"/g)].map((m) => m[1]);
     assert.ok(imports.every((spec) => !/testing\//.test(spec)), `${file} imports a testing module`);
@@ -113,11 +116,12 @@ test("5. every missing required production option fails closed, and a rejected c
   const required = [
     "workspaceDir", "workspaceId", "documentId", "planSource", "jira", "repository", "git", "github", "agent", "validation", "review",
     "planSource.file", "jira.mode", "jira.projectKey", "jira.issueTypeName", "jira.taskIdPattern", "jira.observation", "jira.relationship", "jira.completion",
+    "jira.observation.source", "jira.relationship.linkTypeName", "jira.relationship.dependentEnd",
     "jira.completion.doneStatusName", "jira.completion.transitionName", "repository.identity", "repository.baseRef", "git.repoPath",
     "github.owner", "github.repo", "github.baseBranch", "github.workflowIdentity", "agent.kind", "agent.command", "agent.board", "agent.coderAssignee", "validation.command", "review.command",
   ];
   for (const path of required) {
-    const config = prodConfig(); const parts = path.split("."); let node = config;
+    const config = clone(prodConfig()); const parts = path.split("."); let node = config;
     for (const part of parts.slice(0, -1)) node = node[part];
     delete node[parts.at(-1)];
     rejects(config, PROD_ENV, null);
@@ -126,10 +130,10 @@ test("5. every missing required production option fails closed, and a rejected c
     const env = { ...PROD_ENV }; delete env[name];
     rejects(prodConfig(), env, new RegExp(name));
   }
-  rejects(prodConfig({ jira: { ...prodConfig().jira, mode: "scoped", site: undefined } }), PROD_ENV, /LOOP_JIRA_CLOUD_ID/);
+  rejects(withJira({ mode: "scoped", site: undefined }), PROD_ENV, /LOOP_JIRA_CLOUD_ID/);
 });
 
-test("6. invalid configuration fails closed: profile, unknown or synthetic-only keys, relationship, pattern, observation, agent kind, commands", () => {
+test("6. invalid configuration fails closed: profile, unknown or synthetic-only keys at every level, relationship, pattern, observation, agent kind, commands", () => {
   rejects({ ...prodConfig(), profile: "synthetic" }, PROD_ENV, /profile/);
   rejects({ ...prodConfig(), profile: undefined }, PROD_ENV, /profile/);
   rejects({ ...prodConfig(), planFile: "x" }, PROD_ENV, /planFile/);
@@ -137,11 +141,15 @@ test("6. invalid configuration fails closed: profile, unknown or synthetic-only 
   rejects({ ...prodConfig(), crashAt: { point: "x" } }, PROD_ENV, /crashAt/);
   rejects({ ...prodConfig(), github: { ...prodConfig().github, fake: {} } }, PROD_ENV, /fake/);
   rejects({ ...prodConfig(), github: { ...prodConfig().github, live: true } }, PROD_ENV, /live/);
-  rejects({ ...prodConfig(), jira: { ...prodConfig().jira, relationship: { linkTypeName: "Blocks" } } }, PROD_ENV, /relationship/);
-  rejects({ ...prodConfig(), jira: { ...prodConfig().jira, taskIdPattern: "([" } }, PROD_ENV, /regular expression/);
-  rejects({ ...prodConfig(), jira: { ...prodConfig().jira, observation: { source: "board" } } }, PROD_ENV, /observation/);
-  rejects({ ...prodConfig(), jira: { ...prodConfig().jira, mode: "other" } }, PROD_ENV, /mode/);
-  rejects({ ...prodConfig(), jira: { ...prodConfig().jira, mode: "classic", site: "" } }, PROD_ENV, /site|required/);
+  rejects({ ...prodConfig(), github: { ...prodConfig().github, maxCorrections: 3 } }, PROD_ENV, /maxCorrections/);
+  rejects(withJira({ relationship: { linkTypeName: "Blocks" } }), PROD_ENV, /relationship/);
+  rejects(withJira({ relationship: { ...SYNTHETIC_BLOCKS_RELATIONSHIP, extra: 1 } }), PROD_ENV, /extra/);
+  rejects(withJira({ taskIdPattern: "([" }), PROD_ENV, /regular expression/);
+  rejects(withJira({ observation: { source: "board" } }), PROD_ENV, /observation/);
+  rejects(withJira({ observation: { source: "search", extra: true } }), PROD_ENV, /extra/);
+  rejects(withJira({ observation: { source: "search", boardId: 5 } }), PROD_ENV, /observation/);
+  rejects(withJira({ mode: "other" }), PROD_ENV, /mode/);
+  rejects(withJira({ mode: "classic", site: "" }), PROD_ENV, /site|required/);
   rejects({ ...prodConfig(), agent: { ...prodConfig().agent, kind: "claude" } }, PROD_ENV, /agent\.kind/);
   rejects({ ...prodConfig(), agent: { ...prodConfig().agent, pollMs: -1 } }, PROD_ENV, /pollMs/);
   rejects({ ...prodConfig(), validation: { command: "x", args: "not-an-array" } }, PROD_ENV, /args/);
@@ -154,6 +162,57 @@ test("6. invalid configuration fails closed: profile, unknown or synthetic-only 
   rejects([], PROD_ENV, /object/);
 });
 
+test("6b. every optional value is type- and range-checked; nothing bad is silently accepted or surfaces as an internal error", () => {
+  const cases = [
+    [{ timings: "abc" }, /timings/], [{ timings: { instanceLeaseTtlMs: "x" } }, /instanceLeaseTtlMs/], [{ timings: { instanceLeaseTtlMs: 5 } }, /instanceLeaseTtlMs/],
+    [{ timings: { idlePollMs: 0 } }, /idlePollMs/], [{ timings: { unknownTiming: 1 } }, /unknownTiming/], [{ timings: { defaultWaitMs: 1.5 } }, /defaultWaitMs/],
+    [{ ownerId: 5 }, /ownerId/], [{ ownerId: "" }, /ownerId/], [{ outboxClaimTtlMs: "x" }, /outboxClaimTtlMs/], [{ heartbeatWorker: "yes" }, /heartbeatWorker/],
+    [{ exitOnCompleted: 1 }, /exitOnCompleted/], [{ passEnv: "PATH" }, /passEnv/], [{ passEnv: ["LOOP_JIRA_API_TOKEN"] }, /passEnv/], [{ passEnv: ["bad name"] }, /passEnv/],
+  ];
+  for (const [patch, pattern] of cases) rejects({ ...prodConfig(), ...patch }, PROD_ENV, pattern);
+  for (const [patch, pattern] of [
+    [{ timeoutMs: "x" }, /jira\.timeoutMs/], [{ gatewayHost: 5 }, /gatewayHost/], [{ scheme: "ftp" }, /scheme/], [{ site: 5 }, /site/],
+    [{ completion: { doneStatusName: "Done", transitionName: "Done", expectedCurrentStatusNames: "x" } }, /expectedCurrentStatusNames/],
+    [{ completion: { doneStatusName: "Done", transitionName: "Done", surprise: 1 } }, /surprise/],
+  ]) rejects(withJira(patch), PROD_ENV, pattern);
+  rejects({ ...prodConfig(), github: { ...prodConfig().github, timeoutMs: "x" } }, PROD_ENV, /github\.timeoutMs/);
+  // valid optionals are accepted
+  const ok = build({ ...prodConfig(), timings: { instanceLeaseTtlMs: 5000, idlePollMs: 10 }, ownerId: "owner-1", outboxClaimTtlMs: 1000, heartbeatWorker: false, exitOnCompleted: true, passEnv: ["MY_OPTIONAL_VAR"] });
+  ok.close();
+});
+
+test("6c. plain http is allowed only for a loopback endpoint (credentials never cross a network in cleartext)", () => {
+  rejects(withJira({ scheme: "http" }), PROD_ENV, /loopback/);
+  rejects(withJira({ scheme: "http", site: "jira.example.com" }), PROD_ENV, /loopback/);
+  rejects(withJira({ scheme: "http", site: "127.0.0.1.evil.example.com:80" }), PROD_ENV, /loopback/);
+  rejects(withJira({ mode: "scoped", site: undefined, scheme: "http" }), { ...PROD_ENV, LOOP_JIRA_CLOUD_ID: "c-1" }, /loopback/);
+  rejects(withJira({ mode: "scoped", site: undefined, scheme: "http", gatewayHost: "api.atlassian.com" }), { ...PROD_ENV, LOOP_JIRA_CLOUD_ID: "c-1" }, /loopback/);
+  for (const site of ["127.0.0.1:8080", "localhost:3000", "127.0.0.1"]) build(withJira({ scheme: "http", site })).close();
+  build(withJira({ scheme: "https", site: "jira.example.com" })).close();
+});
+
+test("6d. startup facts are checked: a missing plan file, local clone or executable fails closed before any state is created", () => {
+  const cases = [
+    [{ ...prodConfig(), planSource: { file: join(ws.dir, "missing-plan.txt") } }, /planSource\.file/],
+    [{ ...prodConfig(), planSource: { file: ws.dir } }, /planSource\.file/],
+    [{ ...prodConfig(), git: { repoPath: join(ws.dir, "no-such-clone") } }, /git\.repoPath/],
+    [{ ...prodConfig(), agent: { ...prodConfig().agent, command: "definitely-not-installed-agent-xyz" } }, /agent\.command/],
+    [{ ...prodConfig(), validation: { command: join(ws.dir, "no-such-validator") } }, /validation\.command/],
+    [{ ...prodConfig(), review: { command: "definitely-not-installed-reviewer-xyz" } }, /review\.command/],
+  ];
+  for (const [config, pattern] of cases) {
+    assert.throws(() => buildProductionController(config, PROD_ENV), (error) => error instanceof ProductionProfileError && error.code === "CONFIG_INVALID" && pattern.test(error.message));
+    assert.ok(!existsSync(config.workspaceDir), "no state is created");
+  }
+  assert.ok(executableExists(process.execPath, PROD_ENV));
+  assert.ok(executableExists("node", PROD_ENV));
+  assert.ok(!executableExists("definitely-not-installed-xyz", PROD_ENV));
+});
+
+test("6e. the reviewer must not be the same executable as the implementing agent", () => {
+  rejects({ ...prodConfig(), review: { command: process.execPath } }, PROD_ENV, /independent/);
+});
+
 test("7. Google is not required: no Google key or credential is needed, and a Google option is not accepted", () => {
   const env = { ...PROD_ENV }; for (const name of Object.keys(env)) assert.ok(!/google/i.test(name));
   const built = build(prodConfig(), env); built.close();
@@ -162,22 +221,49 @@ test("7. Google is not required: no Google key or credential is needed, and a Go
   assert.ok(!/process\.env\.GOOGLE|GOOGLE_[A-Z_]+/.test(text), "the production profile reads no Google environment variable");
 });
 
-test("8. secrets never appear in errors, validation messages or the child environment", () => {
+test("8. secrets never appear in errors or validation messages, and child processes get an allowlisted environment", () => {
   const withKey = { ...prodConfig(), apiToken: SECRET };
   assert.throws(() => validateProductionConfig(withKey, PROD_ENV), (error) => /credential/.test(error.message) && !error.message.includes(SECRET));
-  const nested = { ...prodConfig(), jira: { ...prodConfig().jira, password: SECRET } };
+  const nested = withJira({ password: SECRET });
   assert.throws(() => validateProductionConfig(nested, PROD_ENV), (error) => !error.message.includes(SECRET));
+  const nestedTimings = { ...prodConfig(), timings: { accessKey: SECRET } };
+  assert.throws(() => validateProductionConfig(nestedTimings, PROD_ENV), (error) => !error.message.includes(SECRET));
   for (const mutate of [(c) => { delete c.agent.board; }, (c) => { c.jira.taskIdPattern = "(["; }, (c) => { c.profile = "x"; }]) {
     const config = clone(prodConfig()); mutate(config);
     assert.throws(() => validateProductionConfig(config, PROD_ENV), (error) => !error.message.includes(SECRET) && !error.message.includes(PROD_ENV.LOOP_JIRA_EMAIL));
   }
-  const env = sanitizedEnv({ PATH: "p", HOME: "h", LOOP_JIRA_EMAIL: "e", LOOP_JIRA_API_TOKEN: SECRET, GITHUB_TOKEN: SECRET, MY_PASSWORD: SECRET, OPENAI_API_KEY: SECRET });
-  assert.deepEqual(Object.keys(env).sort(), ["HOME", "PATH"]);
+  const ambient = {
+    PATH: "p", HOME: "h", TEMP: "t", LOOP_JIRA_EMAIL: "e", LOOP_JIRA_API_TOKEN: SECRET, GITHUB_TOKEN: SECRET, MY_PASSWORD: SECRET, OPENAI_API_KEY: SECRET,
+    AWS_ACCESS_KEY_ID: SECRET, AWS_SESSION_X: SECRET, DEPLOY_PAT: SECRET, SSH_AUTH_SOCK: SECRET, NPM_CONFIG__AUTH: SECRET, SERVICE_PRIVATE_KEY: SECRET, UNRELATED_CUSTOM_CREDS: SECRET,
+  };
+  assert.deepEqual(Object.keys(childEnvironment(ambient)).sort(), ["HOME", "PATH", "TEMP"]);
+  assert.deepEqual(Object.keys(childEnvironment({ ...ambient, MY_OPTIONAL_VAR: "v" }, ["MY_OPTIONAL_VAR"])).sort(), ["HOME", "MY_OPTIONAL_VAR", "PATH", "TEMP"]);
   const built = build();
   try {
-    assert.ok(!JSON.stringify(Object.entries(built.validator.env)).includes(SECRET));
-    assert.ok(!JSON.stringify(Object.entries(built.reviewer.env)).includes(SECRET));
+    assert.ok(!JSON.stringify(built.validator.env).includes(SECRET));
+    assert.ok(!JSON.stringify(built.reviewer.env).includes(SECRET));
+    assert.ok(!Object.keys(built.reviewer.env).some((name) => /^LOOP_JIRA_/.test(name)));
   } finally { built.close(); }
+});
+
+test("8b. log scrubbing replaces raw and JSON-escaped secret values, including ones containing quotes and backslashes", () => {
+  const tricky = 'tok"en\\with-special-0123456789';
+  const env = { LOOP_JIRA_API_TOKEN: tricky, CUSTOM_SESSION_ID: "session-value-123", SSH_AUTH_SOCK: "/tmp/agent.sock-1", PLAIN: "plain-visible-value", SHORT_TOKEN: "abc" };
+  const values = secretValues(env);
+  assert.ok(values.includes(tricky) && values.includes("session-value-123") && values.includes("/tmp/agent.sock-1"));
+  assert.ok(!values.includes("plain-visible-value") && !values.includes("abc"), "non-secret and too-short values are not scrubbed");
+  const line = JSON.stringify({ event: "fatal", message: `bad ${tricky} and session-value-123 and plain-visible-value` });
+  assert.ok(line.includes(JSON.stringify(tricky).slice(1, -1)), "precondition: the JSON text carries the escaped form");
+  const out = scrubText(line, values);
+  assert.ok(!out.includes(tricky) && !out.includes(JSON.stringify(tricky).slice(1, -1)) && !out.includes("session-value-123"));
+  assert.ok(out.includes("[REDACTED]") && out.includes("plain-visible-value"));
+  assert.deepEqual(JSON.parse(out).event, "fatal", "the scrubbed line is still valid JSON");
+  // a message that already embeds the value JSON-encoded is encoded a second time by the log line
+  const twice = JSON.stringify(JSON.stringify(tricky).slice(1, -1)).slice(1, -1);
+  const nestedLine = JSON.stringify({ event: "fatal", message: `got ${JSON.stringify(tricky)}` });
+  assert.ok(nestedLine.includes(twice), "precondition: the doubly encoded form is present");
+  assert.ok(!scrubText(nestedLine, values).includes(twice) && !scrubText(nestedLine, values).includes("special-0123456789"));
+  assert.ok(secretValues({ LOOP_PASSED: "passed-through-value" }, ["LOOP_PASSED"]).includes("passed-through-value"));
 });
 
 test("9. the selector builds production only when asked, with no default profile", async () => {
@@ -193,9 +279,18 @@ test("10. there is no implicit fallback from production to synthetic: an invalid
   const broken = { ...prodConfig(), agent: undefined };
   await assert.rejects(buildControllerForProfile(broken, PROD_ENV), (error) => error.code === "CONFIG_INVALID" && /agent/.test(error.message));
   // a production config that also carries synthetic fields is rejected outright rather than interpreted as synthetic
-  const hybrid = { ...prodConfig(), planFile: ws.planFile, jira: { ...prodConfig().jira, projectKey: "PRJ" } };
+  const hybrid = { ...prodConfig(), planFile: ws.planFile };
   await assert.rejects(buildControllerForProfile(hybrid, PROD_ENV), (error) => error.code === "CONFIG_INVALID");
   assert.ok(!existsSync(join(ws.dir, "state", "agent-calls.jsonl")), "no synthetic artifact is produced");
+});
+
+test("10b. a store failing after earlier stores were opened closes them (no leaked handles) and leaves no half-built controller", () => {
+  const config = prodConfig();
+  mkdirSync(join(config.workspaceDir, "controller.sqlite"), { recursive: true }); // makes the THIRD store fail after two were opened
+  assert.throws(() => buildProductionController(config, PROD_ENV));
+  // an open SQLite handle would keep these files locked (EBUSY/EPERM on Windows); closed handles let them be removed
+  rmSync(join(config.workspaceDir, "plans.sqlite"), { force: false });
+  rmSync(join(config.workspaceDir, "outbox.sqlite"), { force: false });
 });
 
 const writeJson = (name, value) => { const path = join(ws.dir, name); writeFileSync(path, JSON.stringify(value), "utf8"); return path; };
@@ -206,6 +301,8 @@ test("11. CLI: production is selected explicitly; bad or missing selection exits
     ["unknown profile", { ...prodConfig(), profile: "prod" }, PROD_ENV],
     ["production without credentials", prodConfig(), {}],
     ["production with missing section", { ...prodConfig(), agent: undefined }, PROD_ENV],
+    ["production with a bad optional value", { ...prodConfig(), ownerId: 5 }, PROD_ENV],
+    ["production with a missing executable", { ...prodConfig(), review: { command: "definitely-not-installed-reviewer-xyz" } }, PROD_ENV],
   ];
   for (const [name, config, env] of cases) {
     const handle = runProcess(writeJson(`${name.replace(/ /g, "-")}.json`, config), { env: { LOOP_JIRA_EMAIL: "", LOOP_JIRA_API_TOKEN: "", ...env } });
@@ -218,10 +315,24 @@ test("11. CLI: production is selected explicitly; bad or missing selection exits
   assert.ok(!existsSync(join(ws.dir, "state")), "no state directory was created by any rejected configuration");
 });
 
+test("11b. CLI log scrubbing is active: a secret that reaches a log line is redacted (plain and with quotes/backslashes)", async () => {
+  for (const token of [SECRET, 'quo"te\\back-slash-secret-0123']) {
+    const handle = runProcess(writeJson("leak.json", { ...prodConfig(), profile: `leaky-${token}` }), { env: { ...PROD_ENV, LOOP_JIRA_API_TOKEN: token } });
+    const result = await handle.exited;
+    assert.equal(result.code, 78);
+    const fatal = result.lines.find((l) => l.event === "fatal");
+    assert.ok(fatal, "the configuration error was logged");
+    assert.ok(/leaky-\[REDACTED\]/.test(fatal.message), `redacted marker present: ${fatal.message}`);
+    const raw = JSON.stringify(result.lines);
+    const once = JSON.stringify(token).slice(1, -1); const twice = JSON.stringify(once).slice(1, -1);
+    assert.ok(!raw.includes(token) && !raw.includes(once) && !raw.includes(twice) && !result.stderr.includes(token));
+  }
+});
+
 test("12. CLI: a valid production config is built and started from the CLI (real process, local Jira mock, no Hermes needed to start)", async () => {
   await mock.reset();
   const config = prodConfig({ timings: { instanceLeaseTtlMs: 15000, defaultWaitMs: 200, idlePollMs: 300, blockedPollMs: 300 } }, `127.0.0.1:${mock.port}`);
-  config.jira.scheme = "http"; config.jira.projectKey = "LOOP"; config.jira.taskIdPattern = "^TASK-\\d+$";
+  config.jira.scheme = "http"; config.jira.projectKey = "LOOP";
   const handle = runProcess(writeJson("valid-production.json", config), { env: PROD_ENV });
   try {
     const deadline = Date.now() + 20000;
@@ -241,9 +352,9 @@ test("13. the existing synthetic profile still builds through the explicit selec
   assert.ok(BIN.endsWith("loop-controller.js"));
 });
 
-test("14. controller behaviour stays deterministic: two production builds from the same config have identical wiring and read-only state", () => {
-  const dirA = prodConfig(); const dirB = { ...prodConfig(), workspaceDir: join(ws.dir, "state-b") };
-  const a = build(dirA); const b = build(dirB);
+test("14. production wiring is deterministic: the same config yields the same wiring and a fresh, empty controller state", () => {
+  // The controller itself is unchanged by CP-09; its behavioural determinism is proven by the existing loop-controller suites, which run unmodified.
+  const a = build(prodConfig()); const b = build({ ...prodConfig(), workspaceDir: join(ws.dir, "state-b") });
   try {
     assert.deepEqual(a.controller.materialization, b.controller.materialization);
     assert.deepEqual(a.controller.completion, b.controller.completion);
@@ -252,5 +363,4 @@ test("14. controller behaviour stays deterministic: two production builds from t
     assert.deepEqual(a.stores.controllerStore.list(), []);
     assert.deepEqual(b.stores.controllerStore.list(), []);
   } finally { a.close(); b.close(); }
-  mkdirSync(join(ws.dir, "unused"), { recursive: true });
 });
