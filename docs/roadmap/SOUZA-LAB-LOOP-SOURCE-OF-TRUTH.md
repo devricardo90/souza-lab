@@ -10,7 +10,7 @@ This document is the canonical roadmap and governance record for building a reus
 
 ## Project identity and lineage
 
-Owner decision, recorded 2026-10-05. This section resolves any ambiguity about which repository and which roadmap are active.
+Owner decision, recorded 2026-10-05. This section resolves any ambiguity about which repository and which roadmap are active. These statements are Owner directives given in session; they are not derivable from repository history, which does not otherwise mention `rick-loop` or AXYVERO. The same applies to the CP-09..CP-15 roadmap below.
 
 | Name | Role |
 |---|---|
@@ -25,7 +25,7 @@ Owner decision, recorded 2026-10-05. This section resolves any ambiguity about w
 
 Status decisions recorded with this reconciliation:
 
-- **CP-08 is DONE** (`CP08_FINAL_STATUS = DONE`). Evidence: `docs/evidence/CP-08-JIRA-LIVE-STATUS.md`, `docs/evidence/CP-08-JIRA-LEDGER.json`, and the merge of PR #2 at `e94ac52c0464437428d097db7caa8df7c63d54bd`. The CP-08 evidence files are unchanged by this reconciliation; where they still carry pre-merge wording (for example "READY_FOR_RE_REVIEW"), that wording is historical and this document governs. The Owner records the post-merge validation of CP-08 closure as 534/534 passing; the latest test count committed in repository evidence is 516 (recorded before PR #1 and PR #3 were reconciled into the CP-08 branch), and no code has changed since closure.
+- **CP-08 is DONE.** This is the Owner's final status for the checkpoint (the CP-08 evidence files use their own status tokens, not this wording). Evidence: `docs/evidence/CP-08-JIRA-LIVE-STATUS.md`, `docs/evidence/CP-08-JIRA-LEDGER.json`, and the merge of PR #2 at `e94ac52c0464437428d097db7caa8df7c63d54bd`. The CP-08 evidence files are unchanged by this reconciliation; where they still carry pre-merge wording (for example "READY_FOR_RE_REVIEW"), that wording is historical and this document governs. The Owner records the post-merge validation of CP-08 closure as 534/534 passing; the latest test count committed in repository evidence is 516 (recorded before PR #1 and PR #3 were reconciled into the CP-08 branch), and no code has changed since closure.
 - **Phase 7's earlier BLOCKED state is superseded** by the CP-08 live Jira evidence. The Phase 7 evidence file remains an accurate record of the state at that time.
 - **CP-01 through CP-07 are historical implementation checkpoints with evidence limitations.** Several have code and tests but no standalone evidence document (for example, CP-07's live-proof script is committed without a committed result record). Those limitations are recorded, not repaired by fabrication, and **do not by themselves authorize reopening or reimplementing those checkpoints**.
 - The Phase 7 Microtest 004 wording and "Do not begin Phase 8" in Change control are historical; forward work is governed by the checkpoint roadmap below.

@@ -5,11 +5,13 @@
 ## Start here
 
 - **Canonical source of truth (roadmap, status, active checkpoint):** [`docs/roadmap/SOUZA-LAB-LOOP-SOURCE-OF-TRUTH.md`](docs/roadmap/SOUZA-LAB-LOOP-SOURCE-OF-TRUTH.md). It is the only source of truth; do not create another.
-- Owner decisions: [`docs/decisions/`](docs/decisions/)
+- Owner decisions: [`docs/decisions/`](docs/decisions/) (the existing Jira decision there still describes Phase 7 as BLOCKED; that is historical and superseded by CP-08 per the Source of Truth)
 - Evidence records: [`docs/evidence/`](docs/evidence/)
 - Hermes execution boundary: [`docs/hermes-agent-executor.md`](docs/hermes-agent-executor.md)
 
 ## Which repository is which
+
+These statements are Owner directives recorded 2026-10-05 in the Source of Truth, which holds the authoritative wording.
 
 | Name | Role |
 |---|---|
