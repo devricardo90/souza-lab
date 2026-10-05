@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import { runControllerLoop } from "../src/controller/controller-process.js";
+import { buildControllerForProfile } from "../src/controller/profile-selector.js";
 
 /**
  * Standalone Controller process (run under systemd / Docker / any supervisor).
@@ -8,7 +9,10 @@ import { runControllerLoop } from "../src/controller/controller-process.js";
  * argv carries only a config FILE PATH; secrets come from the environment (LOOP_JIRA_EMAIL / LOOP_JIRA_API_TOKEN).
  * SIGTERM / SIGINT: the current cycle finishes, state is already durable, the instance lease is released, exit 0.
  * Exit codes: 0 graceful / completed, 70 internal error, 75 lease lost, 78 configuration error.
- * Only the "synthetic" profile exists in CP-05; real Google/Jira/GitHub/agent composition is deliberately not wired.
+ * The profile is chosen EXPLICITLY by config.profile ("synthetic" | "production"). There is no default and no fallback: a missing,
+ * unknown or invalid profile/configuration exits 78 and never degrades into synthetic mode (see src/controller/profile-selector.js).
+ * "production" is the CP-09 composition (Jira + HermesAgentExecutor + Git/GitHub + command validator/reviewer; no Google required).
+ * Logged text is scrubbed of the values of credential-looking environment variables.
  */
 
 function parseArgs(argv) {
@@ -17,14 +21,15 @@ function parseArgs(argv) {
   return argv[index + 1];
 }
 
-const log = (entry) => process.stdout.write(`${JSON.stringify(entry)}\n`);
+const SECRET_NAME = /token|secret|password|passwd|api[-_]?key|credential|authorization/i;
+const secretValues = () => Object.entries(process.env).filter(([name, value]) => (SECRET_NAME.test(name) || /^LOOP_JIRA_/.test(name)) && typeof value === "string" && value.length >= 6).map(([, value]) => value);
+const scrub = (text) => secretValues().reduce((out, value) => out.split(value).join("[REDACTED]"), text);
+const log = (entry) => process.stdout.write(`${scrub(JSON.stringify(entry))}\n`);
 
 let exitCode = 0;
 try {
   const config = JSON.parse(readFileSync(parseArgs(process.argv.slice(2)), "utf8"));
-  if (config.profile !== "synthetic") throw Object.assign(new Error(`unsupported profile "${config.profile}" (only "synthetic" exists in CP-05)`), { code: "CONFIG_INVALID" });
-  const { buildSyntheticController } = await import("../src/testing/synthetic-profile.js");
-  const { controller, close } = buildSyntheticController(config);
+  const { controller, close } = await buildControllerForProfile(config);
   const abort = new AbortController();
   for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => { log({ event: "signal", signal }); abort.abort(); });
   try {
