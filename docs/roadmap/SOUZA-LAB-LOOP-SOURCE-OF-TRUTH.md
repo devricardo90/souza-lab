@@ -1,10 +1,67 @@
 # Souza Lab Loop — Source of Truth
 
 **Baseline date:** 2026-09-27
-**Status:** Phase 6 durable execution lease and real GitHub sandbox lifecycle PASS. Phase 7 (real Jira TaskSystem adapter) is BLOCKED on real Jira access; the adapter, canonical mapping, and J01–J20 failure matrix are implemented and pass deterministically, and a real LoopRuntime was proven to reach DONE with a Jira-sourced task and select the next Jira-dependent task, but no real Jira read/write or Microtest 004 was executed because no Jira site/credentials exist in this environment. See [Phase 6 evidence](../evidence/PHASE-6-GITHUB-RUNTIME.md) and [Phase 7 evidence](../evidence/PHASE-7-JIRA-TASKSYSTEM.md).
-**Current phase:** Phase 7 — BLOCKED on real Jira credentials; do not claim PASS until a real Jira project is reachable and Microtest 004 runs against it.
+**Last reconciled:** 2026-10-05 (documentation-only reconciliation; see "Project identity and lineage")
+**Source-of-truth status:** RECONCILED
+**Status:** CP-08 (live Jira integration) is DONE and merged at `e94ac52c0464437428d097db7caa8df7c63d54bd`. The Hermes agent executor bridge is merged (PR #3). The controller and CLI are still synthetic-only; real runtime composition is the first functional gap.
+**Active checkpoint:** CP-09 — Production Composition (Owner-approved; implementation not yet authorized).
 
 This document is the canonical roadmap and governance record for building a reusable development Loop in Souza Lab. It records the phase order, current evidence, decisions, and boundaries. The owner accepted baseline commit `e20e9f327f6b67bf62ca05b53c4185013f910b0b` and authorized implementation through B7; no additional planning gate is required between stages.
+
+## Project identity and lineage
+
+Owner decision, recorded 2026-10-05. This section resolves any ambiguity about which repository and which roadmap are active.
+
+| Name | Role |
+|---|---|
+| RecompraCRM | Historical origin: the environment where the autonomous Loop was first developed and proven. Read-only evidence. |
+| `rick-loop` | Historical precursor and abandoned extraction attempt. Preserved read-only. **Not part of the active roadmap**: its Foundation plan, milestones (M0–M9) and sprint labels (F0–F7) do not control `souza-lab` and must not be used to plan or judge it. |
+| `souza-lab` | The **official repository** of the reusable autonomous Loop. The only active repository for its development. |
+| Souza Loop | The runtime/engine implemented in `souza-lab`. |
+| Jira | Operational control plane and task system. It owns operational work state; it is **not** the canonical architecture authority (see [Owner decision](../decisions/OWNER-DECISION-JIRA-CONTROL-PLANE.md)). |
+| Hermes | The production agent execution layer, reached through `HermesAgentExecutor` (see [Hermes agent boundary](../hermes-agent-executor.md)). |
+| Google Docs | Optional and deferred integration. **Not required for Loop readiness** and not a blocker; no acceptance criterion in this repository requires it. |
+| AXYVERO and future projects | Consumers of Souza Loop. |
+
+Status decisions recorded with this reconciliation:
+
+- **CP-08 is DONE** (`CP08_FINAL_STATUS = DONE`). Evidence: `docs/evidence/CP-08-JIRA-LIVE-STATUS.md`, `docs/evidence/CP-08-JIRA-LEDGER.json`, and the merge of PR #2 at `e94ac52c0464437428d097db7caa8df7c63d54bd`. The CP-08 evidence files are unchanged by this reconciliation; where they still carry pre-merge wording (for example "READY_FOR_RE_REVIEW"), that wording is historical and this document governs. The Owner records the post-merge validation of CP-08 closure as 534/534 passing; the latest test count committed in repository evidence is 516 (recorded before PR #1 and PR #3 were reconciled into the CP-08 branch), and no code has changed since closure.
+- **Phase 7's earlier BLOCKED state is superseded** by the CP-08 live Jira evidence. The Phase 7 evidence file remains an accurate record of the state at that time.
+- **CP-01 through CP-07 are historical implementation checkpoints with evidence limitations.** Several have code and tests but no standalone evidence document (for example, CP-07's live-proof script is committed without a committed result record). Those limitations are recorded, not repaired by fabrication, and **do not by themselves authorize reopening or reimplementing those checkpoints**.
+- The Phase 7 Microtest 004 wording and "Do not begin Phase 8" in Change control are historical; forward work is governed by the checkpoint roadmap below.
+
+## Active checkpoint roadmap
+
+Owner-approved forward checkpoints. Only the active checkpoint may be implemented, and only after Owner authorization.
+
+| Checkpoint | Name | Status |
+|---|---|---|
+| CP-09 | Production Composition | ACTIVE — scope recorded below; implementation not yet authorized |
+| CP-10 | Live Hermes End-to-End Proof | NOT_STARTED |
+| CP-11 | Agent-Agnostic Jira Gateway / Write Authority | NOT_STARTED |
+| CP-12 | Durable Wakeup and Real Restart Recovery | NOT_STARTED |
+| CP-13 | Multi-Process Locking / Concurrency Safety | NOT_STARTED |
+| CP-14 | Server-Side Merge Enforcement and Hardening | NOT_STARTED |
+| CP-15 | Release Candidate / Final Souza Loop Audit | NOT_STARTED |
+
+### CP-09 scope
+
+**Goal:** replace the synthetic-only runtime composition with a production composition reachable from the CLI. Today `bin/loop-controller.js` supports only the `synthetic` profile.
+
+Required production composition:
+
+```text
+Jira task/control plane
+→ Souza Loop deterministic controller
+→ HermesAgentExecutor
+→ Git/GitHub
+→ CI/validation/review lifecycle
+→ reconciliation/recovery
+```
+
+Google Docs must **not** be required by CP-09.
+
+Open decisions that remain listed in "Loop Base v0 design boundary" (durable wakeup service, multi-process locking, server-side merge enforcement) are assigned to CP-12, CP-13 and CP-14 respectively, and the agent-agnostic Jira gateway to CP-11.
 
 ## Mission and evidence boundary
 
@@ -46,7 +103,7 @@ The owner gate for implementation was passed after the accepted baseline commit.
 | 4 | Failure injection, correction and retest | PASS | All 34 fault IDs executed; corrections are regression-tested; Microtest 001 and full suite pass. F03 confirms that local suffix truncation needs a trusted external checkpoint to detect. Evidence: `docs/evidence/PHASE-4-FAILURE-INJECTION.md`. |
 | 5 | Execution runtime | PASS | Deterministic runtime, action planning, checkpoints, retries/wakeup contract, evidence anchoring, projections, Microtest 002, R01–R08, and P5-01–P5-20 passed. Phase 4 regressions, Microtest 001, and the 92-test full suite pass. Evidence: `docs/evidence/PHASE-5-EXECUTION-RUNTIME.md`. |
 | 6 | Durable execution safety and real GitHub SCM/CI | PASS | Local durable leases/fencing, real GitHub SCM and exact-workflow CI adapters, two-runtime race, two real sandbox PR/CI/merge lifecycles, G01–G18 injections, Microtest 001, Phase 4, Microtest 002, and the 128-test full suite passed. GitHub server-side manual-bypass enforcement is not proven. Evidence: `docs/evidence/PHASE-6-GITHUB-RUNTIME.md`. |
-| 7 | Real Jira TaskSystem adapter | BLOCKED (real Jira access) | `JiraTaskSystemAdapter`/`JiraSyncClient` implemented behind the unchanged `TaskSystemAdapter` contract; canonical status/AC/dependency mapping, J01–J20, and a real-`LoopRuntime` synthetic substitution proof (Jira task → DONE → next Jira-dependent task eligible) all pass; the 152-test full suite passes with zero existing files modified. No Jira site/credentials/connector exist in this environment, so the real Jira read/write path and Microtest 004 against a live project were not executed and PASS is not claimed for them. Evidence: `docs/evidence/PHASE-7-JIRA-TASKSYSTEM.md`. |
+| 7 | Real Jira TaskSystem adapter | SUPERSEDED by CP-08 (was BLOCKED on real Jira access at the time of the evidence below) | `JiraTaskSystemAdapter`/`JiraSyncClient` implemented behind the unchanged `TaskSystemAdapter` contract; canonical status/AC/dependency mapping, J01–J20, and a real-`LoopRuntime` synthetic substitution proof (Jira task → DONE → next Jira-dependent task eligible) all pass; the 152-test full suite passes with zero existing files modified. No Jira site/credentials/connector exist in this environment, so the real Jira read/write path and Microtest 004 against a live project were not executed and PASS is not claimed for them. Evidence: `docs/evidence/PHASE-7-JIRA-TASKSYSTEM.md`. |
 
 ## Phase 1 evidence snapshot
 
@@ -101,6 +158,6 @@ Microtest 001 ran against a temporary local Git repository and Markdown roadmap,
 
 ## Change control
 
-Update this document when the owner changes phase order, accepts a gate, resolves an open decision, or corrects a factual claim. Record evidence for completed phase gates. Do not mark a phase complete based only on an agent's summary. The owner gate for B0–B7 is passed. Phases 4, 5, and 6 are complete. Phase 7 is BLOCKED on real Jira access; do not mark it PASS until a real Jira project is reachable and Microtest 004 has actually run against it. Do not begin Phase 8 until a separate Owner directive authorizes it.
+Update this document when the owner changes phase order, accepts a gate, resolves an open decision, or corrects a factual claim. Record evidence for completed phase gates. Do not mark a phase complete based only on an agent's summary. The owner gate for B0–B7 is passed. Phases 4, 5, and 6 are complete. Phase 7 was BLOCKED on real Jira access when its evidence was recorded; that state is superseded by the CP-08 live Jira evidence (see "Project identity and lineage"), and the Phase 7 evidence file is not rewritten. Forward work after CP-08 is governed by the "Active checkpoint roadmap" above (CP-09 onward), which supersedes the earlier Phase 7 and Phase 8 wording; each checkpoint still requires its own Owner authorization before implementation.
 
-Owner decisions are recorded under `docs/decisions/`. See [`docs/decisions/OWNER-DECISION-JIRA-CONTROL-PLANE.md`](../decisions/OWNER-DECISION-JIRA-CONTROL-PLANE.md) for the Owner's decision approving Jira as a persistent operational task-system integration; that decision does not itself change Phase 7's BLOCKED status.
+Owner decisions are recorded under `docs/decisions/`. See [`docs/decisions/OWNER-DECISION-JIRA-CONTROL-PLANE.md`](../decisions/OWNER-DECISION-JIRA-CONTROL-PLANE.md) for the Owner's decision approving Jira as a persistent operational task-system integration; that decision did not itself change Phase 7's status at the time it was recorded; the later CP-08 live evidence did.
