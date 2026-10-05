@@ -209,6 +209,24 @@ test("6d. startup facts are checked: a missing plan file, local clone or executa
   assert.ok(!executableExists("definitely-not-installed-xyz", PROD_ENV));
 });
 
+test("6d-2. an executable must be runnable without a shell: Windows .cmd/.bat shims and non-executable POSIX files are rejected", () => {
+  const shim = join(ws.dir, "tool.cmd"); writeFileSync(shim, "@echo off\r\n", "utf8");
+  const bat = join(ws.dir, "tool.bat"); writeFileSync(bat, "@echo off\r\n", "utf8");
+  const plain = join(ws.dir, "tool-plain"); writeFileSync(plain, "#!/bin/sh\n", { mode: 0o644 });
+  if (process.platform === "win32") {
+    assert.ok(!executableExists(shim, PROD_ENV) && !executableExists(bat, PROD_ENV), "a .cmd/.bat shim is not accepted");
+    assert.ok(!executableExists(plain, PROD_ENV), "an extension-less file is not accepted");
+    assert.ok(!executableExists("tool", { ...PROD_ENV, PATH: ws.dir, Path: ws.dir, PATHEXT: ".CMD;.BAT;.EXE" }), "a .cmd found through PATHEXT is not accepted");
+    assert.throws(() => buildProductionController({ ...prodConfig(), validation: { command: shim } }, PROD_ENV), (error) => error.code === "CONFIG_INVALID" && /\.cmd\/\.bat/.test(error.message));
+  } else {
+    assert.ok(!executableExists(plain, PROD_ENV), "a file without the execute bit is not accepted");
+    const exe = join(ws.dir, "tool-exec"); writeFileSync(exe, "#!/bin/sh\n", { mode: 0o755 });
+    assert.ok(executableExists(exe, PROD_ENV));
+    assert.throws(() => buildProductionController({ ...prodConfig(), validation: { command: plain } }, PROD_ENV), (error) => error.code === "CONFIG_INVALID");
+  }
+  assert.ok(executableExists(process.execPath, PROD_ENV));
+});
+
 test("6e. the reviewer must not be the same executable as the implementing agent", () => {
   rejects({ ...prodConfig(), review: { command: process.execPath } }, PROD_ENV, /independent/);
 });

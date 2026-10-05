@@ -1,17 +1,21 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { IndependentReviewer, validateReviewerOutput } from "../controller/gate-ports.js";
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const WINDOWS = process.platform === "win32";
 const UNAVAILABLE = Object.freeze({ verdict: "UNAVAILABLE", reviewerId: "command-reviewer-unavailable", findings: Object.freeze([]) });
 
-/** Terminates the command and everything it started (process group on POSIX, taskkill /T on Windows). Never throws. */
+/**
+ * Terminates the command and everything it started (process group on POSIX, taskkill /T on Windows). Never throws, never blocks.
+ * Only ever called for a child that is still running: the pid of an exited child may already belong to an unrelated process.
+ */
 function killTree(child) {
   try {
-    if (WINDOWS) spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+    if (WINDOWS) spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" }).on("error", () => {});
     else process.kill(-child.pid, "SIGKILL");
   } catch { try { child.kill(); } catch { /* already gone */ } }
 }
+const stillRunning = (child) => child.exitCode === null && child.signalCode === null;
 
 /**
  * Production IndependentReviewer boundary that is agent-agnostic: one configured command (argv, no shell) receives a JSON
@@ -27,12 +31,12 @@ function killTree(child) {
  * stderr is never surfaced, so a reviewer command cannot leak secrets through this boundary.
  */
 export class CommandIndependentReviewer extends IndependentReviewer {
-  constructor({ command, args = [], timeoutMs = 600000, env = {}, spawnFn = spawn } = {}) {
+  constructor({ command, args = [], timeoutMs = 600000, env = {}, spawnFn = spawn, kill = killTree } = {}) {
     super();
     if (typeof command !== "string" || command.trim() === "") throw new TypeError("a review command is required");
     if (!Array.isArray(args) || args.some((a) => typeof a !== "string")) throw new TypeError("review args must be an array of strings");
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new TypeError("review timeoutMs must be a positive integer");
-    Object.assign(this, { command, args: Object.freeze([...args]), timeoutMs, env, spawnFn });
+    Object.assign(this, { command, args: Object.freeze([...args]), timeoutMs, env, spawnFn, kill });
   }
 
   reviewSpec(workPackage) { return this.invoke({ kind: "spec", workPackage }); }
@@ -59,7 +63,7 @@ export class CommandIndependentReviewer extends IndependentReviewer {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        if (value === null && child) killTree(child);
+        if (value === null && child && stillRunning(child)) this.kill(child);
         resolve(value);
       };
       try { child = this.spawnFn(this.command, [...this.args], { shell: false, windowsHide: true, detached: !WINDOWS, env: this.env, stdio: ["pipe", "pipe", "ignore"] }); }

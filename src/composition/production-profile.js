@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { accessSync, constants, readFileSync, statSync } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
 import { JiraSyncClient } from "../adapters/jira-sync-client.js";
 import { JiraOutboxExecutor } from "../adapters/jira-outbox-executor.js";
@@ -148,12 +148,24 @@ export function validateProductionConfig(config, env = process.env) {
   return Object.freeze(structuredClone(config));
 }
 
-/** True when `command` names an existing file (absolute or relative path) or is found on PATH (honouring PATHEXT on Windows). */
+/**
+ * True when `command` names a file this process can actually execute WITHOUT a shell (absolute or relative path, or found on PATH).
+ * Commands are spawned as an argv with shell:false, so on Windows only real binaries (.exe, .com) qualify: a .cmd/.bat shim
+ * (npm.cmd and the like) would pass a plain existence check and then fail at every cycle. On POSIX the execute bit is required.
+ */
 export function executableExists(command, env = process.env) {
-  const isFile = (path) => { try { return statSync(path).isFile(); } catch { return false; } };
-  if (isAbsolute(command) || /[\\/]/.test(command)) return isFile(command);
-  const exts = process.platform === "win32" ? ["", ...String(env.PATHEXT ?? env.Pathext ?? ".EXE;.CMD;.BAT").split(";").filter(Boolean)] : [""];
-  for (const dir of String(env.PATH ?? env.Path ?? "").split(delimiter).filter(Boolean)) for (const ext of exts) if (isFile(join(dir, command + ext))) return true;
+  const windows = process.platform === "win32";
+  const runnable = (path) => {
+    try {
+      if (!statSync(path).isFile()) return false;
+      if (windows) return /\.(exe|com)$/i.test(path);
+      accessSync(path, constants.X_OK);
+      return true;
+    } catch { return false; }
+  };
+  if (isAbsolute(command) || /[\\/]/.test(command)) return runnable(command);
+  const exts = windows ? ["", ".exe", ".com"] : [""];
+  for (const dir of String(env.PATH ?? env.Path ?? "").split(delimiter).filter(Boolean)) for (const ext of exts) if (runnable(join(dir, command + ext))) return true;
   return false;
 }
 
@@ -162,7 +174,7 @@ function assertEnvironmentReady(config, env) {
   try { if (!statSync(config.planSource.file).isFile()) bad("production config.planSource.file is not a file"); } catch (error) { if (error instanceof ProductionProfileError) throw error; bad("production config.planSource.file does not exist"); }
   try { if (!statSync(config.git.repoPath).isDirectory()) bad("production config.git.repoPath is not a directory"); } catch (error) { if (error instanceof ProductionProfileError) throw error; bad("production config.git.repoPath does not exist"); }
   for (const [path, command] of [["agent.command", config.agent.command], ["validation.command", config.validation.command], ["review.command", config.review.command]]) {
-    if (!executableExists(command, env)) bad(`production config.${path} is not an existing executable`);
+    if (!executableExists(command, env)) bad(`production config.${path} is not an existing executable that can be run without a shell (on Windows only .exe/.com; .cmd/.bat shims are not supported)`);
   }
 }
 

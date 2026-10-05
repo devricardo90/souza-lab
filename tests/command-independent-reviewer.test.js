@@ -54,6 +54,16 @@ test("on timeout the command is actually terminated, not just abandoned", async 
   } finally { rmSync(pidFile, { force: true }); }
 });
 
+test("only a still-running command is killed: an already-exited one is never signalled (its pid may belong to someone else)", async () => {
+  const killed = [];
+  const spy = (child) => { killed.push(child.pid); };
+  assert.equal((await reviewer("process.exit(3)", { kill: spy }).reviewImplementation(REQUEST)).verdict, "UNAVAILABLE");
+  assert.equal((await reviewer(echoVerdict({ verdict: "CLEAN", reviewerId: "r", findings: [] }), { kill: spy }).reviewImplementation(REQUEST)).verdict, "CLEAN");
+  assert.deepEqual(killed, [], "exited children are not killed");
+  assert.equal((await reviewer("setInterval(()=>{},1000)", { kill: (child) => { spy(child); child.kill(); }, timeoutMs: 300 }).reviewImplementation(REQUEST)).verdict, "UNAVAILABLE");
+  assert.equal(killed.length, 1, "a child still running at the timeout is killed exactly once");
+});
+
 test("a successful exit with invalid reviewer output fails closed instead of being treated as a verdict", async () => {
   for (const script of [`process.stdout.write("not json")`, echoVerdict({ verdict: "MAYBE", reviewerId: "r", findings: [] }), echoVerdict({ verdict: "CLEAN", findings: [] }),
     echoVerdict({ verdict: "FINDINGS", reviewerId: "r", findings: [] }), echoVerdict({ verdict: "CLEAN", reviewerId: "r", findings: [{ id: "a", summary: "b" }] })]) {
