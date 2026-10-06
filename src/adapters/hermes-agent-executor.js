@@ -22,9 +22,10 @@ const statusOf = (task) => { const value = task?.status ?? task?.task?.status; r
 
 /** Production AgentExecutor boundary. The command is injectable for deterministic tests. */
 export class HermesAgentExecutor extends AgentExecutor {
-  constructor({ command = "hermes", board = "workflow-prod", coderAssignee = "coder", pollMs = 1000, maxPolls = 3600, run = null } = {}) {
-    super(); this.command = command; this.board = board; this.coderAssignee = coderAssignee; this.pollMs = pollMs; this.maxPolls = maxPolls;
-    this.run = run ?? ((args, options) => execFileAsync(this.command, args, { ...options, encoding: "utf8", maxBuffer: 8 * 1024 * 1024 }));
+  /** env (optional): the exact environment the Hermes CLI is started with. Production passes an allowlisted one so no credential reaches it. */
+  constructor({ command = "hermes", board = "workflow-prod", coderAssignee = "coder", pollMs = 1000, maxPolls = 3600, run = null, env = null } = {}) {
+    super(); this.command = command; this.board = board; this.coderAssignee = coderAssignee; this.pollMs = pollMs; this.maxPolls = maxPolls; this.env = env;
+    this.run = run ?? ((args, options) => execFileAsync(this.command, args, { ...options, ...(this.env ? { env: this.env } : {}), windowsHide: true, encoding: "utf8", maxBuffer: 8 * 1024 * 1024 }));
   }
   idempotencyKey(workPackage, resume) { return `loop-${workPackage.executionId}-${resume ? "resume" : "execute"}`; }
   body(workPackage, context, resume) {

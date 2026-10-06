@@ -66,7 +66,7 @@ const SCHEMA = {
 const AGENT_EXECUTORS = Object.freeze({
   hermes: {
     required: ["board", "coderAssignee"],
-    create: (agent, overrides) => new HermesAgentExecutor({ command: agent.command, board: agent.board, coderAssignee: agent.coderAssignee, pollMs: agent.pollMs, maxPolls: agent.maxPolls, run: overrides.hermesRun ?? null }),
+    create: (agent, overrides, childEnv) => new HermesAgentExecutor({ command: agent.command, board: agent.board, coderAssignee: agent.coderAssignee, pollMs: agent.pollMs, maxPolls: agent.maxPolls, run: overrides.hermesRun ?? null, env: childEnv }),
   },
 });
 const nonEmpty = (v) => typeof v === "string" && v.trim() !== "";
@@ -245,7 +245,7 @@ export function buildProductionController(rawConfig, env = process.env, override
     });
     const outboxExecutor = new JiraOutboxExecutor({ store: outboxStore, jira, workerId: ownerId, claimTtlMs: config.outboxClaimTtlMs ?? 60000, clock, relationship });
 
-    const agent = AGENT_EXECUTORS[config.agent.kind].create(config.agent, overrides);
+    const agent = AGENT_EXECUTORS[config.agent.kind].create(config.agent, overrides, childEnv);
     const validator = new WorkspaceCommandValidator({ command: config.validation.command, args: config.validation.args ?? [], timeoutMs: config.validation.timeoutMs, env: childEnv });
     const reviewer = new CommandIndependentReviewer({ command: config.review.command, args: config.review.args ?? [], timeoutMs: config.review.timeoutMs, env: childEnv });
     const executionRunner = new ExecutionRunner({ attemptStore, agent, repoPath: config.git.repoPath, workspacesDir: join(dir, "workspaces") });

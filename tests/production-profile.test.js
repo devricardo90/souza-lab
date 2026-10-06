@@ -272,6 +272,7 @@ test("8. secrets never appear in errors or validation messages, and child proces
   try {
     assert.ok(!JSON.stringify(built.validator.env).includes(SECRET));
     assert.ok(!JSON.stringify(built.reviewer.env).includes(SECRET));
+    assert.ok(!JSON.stringify(built.agent.env).includes(SECRET) && !Object.keys(built.agent.env).some((n) => /^LOOP_JIRA_/.test(n)), "the Hermes CLI is started with the allowlisted environment too");
     assert.ok(!Object.keys(built.reviewer.env).some((name) => /^LOOP_JIRA_/.test(name)));
   } finally { built.close(); }
 });
