@@ -3,8 +3,8 @@
 **Baseline date:** 2026-09-27
 **Last reconciled:** 2026-10-06 (documentation-only reconciliation; see "Project identity and lineage")
 **Source-of-truth status:** RECONCILED
-**Status:** CP-08 (live Jira integration) is DONE and merged at `e94ac52c0464437428d097db7caa8df7c63d54bd`. The Hermes agent executor bridge is merged (PR #3). CP-09 (production composition) is DONE and merged at `4059e62876759430a8abe36e75cf4a226b0ff519` (PR #5; post-merge full serial suite 565/565): the CLI selects an explicit `synthetic` or `production` profile (`docs/production-profile.md`). The production path has been proven by deterministic tests only; no live Hermes run exists yet.
-**Active checkpoint:** CP-10 — Live Hermes End-to-End + Autonomous Correction Proof (Owner-authorized 2026-10-06).
+**Status:** CP-08 (live Jira integration) is DONE and merged at `e94ac52c0464437428d097db7caa8df7c63d54bd`. The Hermes agent executor bridge is merged (PR #3). CP-09 (production composition) is DONE and merged at `4059e62876759430a8abe36e75cf4a226b0ff519` (PR #5; post-merge full serial suite 565/565, a result recorded from the validation run of 2026-10-06 and accepted by the Owner, not committed evidence): the CLI selects an explicit `synthetic` or `production` profile (`docs/production-profile.md`). The production path has been proven by deterministic tests only; no live Hermes run exists yet.
+**Active checkpoint:** CP-10 — Live Hermes End-to-End + Autonomous Correction Proof (Owner-authorized 2026-10-06; an Owner directive given in session, like the roadmap below, not derivable from repository history).
 
 This document is the canonical roadmap and governance record for building a reusable development Loop in Souza Lab. It records the phase order, current evidence, decisions, and boundaries. The owner accepted baseline commit `e20e9f327f6b67bf62ca05b53c4185013f910b0b` and authorized implementation through B7; no additional planning gate is required between stages.
 
@@ -36,7 +36,7 @@ Owner-approved forward checkpoints. Only the active checkpoint may be implemente
 
 | Checkpoint | Name | Status |
 |---|---|---|
-| CP-09 | Production Composition | DONE — merged `4059e62876759430a8abe36e75cf4a226b0ff519` (PR #5), post-merge 565/565; limitations below |
+| CP-09 | Production Composition | DONE — merged `4059e62876759430a8abe36e75cf4a226b0ff519` (PR #5); post-merge 565/565 recorded from the 2026-10-06 validation run (not committed evidence); limitations below |
 | CP-10 | Live Hermes End-to-End + Autonomous Correction Proof | ACTIVE — scope recorded below |
 | CP-11 | Agent-Agnostic Jira Gateway / Write Authority | NOT_STARTED |
 | CP-12 | Durable Wakeup and Real Restart Recovery | NOT_STARTED |
@@ -46,7 +46,7 @@ Owner-approved forward checkpoints. Only the active checkpoint may be implemente
 
 ### CP-09 scope (DONE)
 
-**Goal:** replace the synthetic-only runtime composition with a production composition reachable from the CLI. Today `bin/loop-controller.js` supports only the `synthetic` profile.
+**Original goal (achieved):** replace the synthetic-only runtime composition with a production composition reachable from the CLI. When this scope was recorded, `bin/loop-controller.js` supported only the `synthetic` profile; it now selects `synthetic` or `production` explicitly.
 
 Required production composition:
 
@@ -165,7 +165,7 @@ TASK
 
 Loop Base v0 preserves the proven properties—dependency-based task resolution, exact-revision validation and review, fail-closed gates, append-only evidence, post-merge validation, and resumable waits—while changing project-specific Markdown/GitHub assumptions into replaceable adapters. Computed state must be checked against persisted projections. Implementation follows the approved B0–B7 sequence.
 
-Production task-system/SCM/CI/review/validation adapters, real capability providers, durable wakeup service, multi-process execution locking, and server-side merge enforcement remain open decisions. They must not be silently settled by this synthetic implementation.
+Historical wording (recorded when only synthetic providers existed): production task-system/SCM/CI/review/validation adapters, real capability providers, durable wakeup service, multi-process execution locking, and server-side merge enforcement were open decisions. The production adapters were since composed (CP-08, CP-09); the durable wakeup service, multi-process locking and server-side merge enforcement remain open and are assigned to CP-12, CP-13 and CP-14.
 
 ## Microtest boundary
 
