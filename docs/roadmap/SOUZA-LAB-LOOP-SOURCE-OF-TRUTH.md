@@ -1,10 +1,10 @@
 # Souza Lab Loop — Source of Truth
 
 **Baseline date:** 2026-09-27
-**Last reconciled:** 2026-10-05 (documentation-only reconciliation; see "Project identity and lineage")
+**Last reconciled:** 2026-10-06 (documentation-only reconciliation; see "Project identity and lineage")
 **Source-of-truth status:** RECONCILED
-**Status:** CP-08 (live Jira integration) is DONE and merged at `e94ac52c0464437428d097db7caa8df7c63d54bd`. The Hermes agent executor bridge is merged (PR #3). The controller and CLI are still synthetic-only; real runtime composition is the first functional gap.
-**Active checkpoint:** CP-09 — Production Composition (Owner-approved; implementation not yet authorized).
+**Status:** CP-08 (live Jira integration) is DONE and merged at `e94ac52c0464437428d097db7caa8df7c63d54bd`. The Hermes agent executor bridge is merged (PR #3). CP-09 (production composition) is DONE and merged at `4059e62876759430a8abe36e75cf4a226b0ff519` (PR #5; post-merge full serial suite 565/565): the CLI selects an explicit `synthetic` or `production` profile (`docs/production-profile.md`). The production path has been proven by deterministic tests only; no live Hermes run exists yet.
+**Active checkpoint:** CP-10 — Live Hermes End-to-End + Autonomous Correction Proof (Owner-authorized 2026-10-06).
 
 This document is the canonical roadmap and governance record for building a reusable development Loop in Souza Lab. It records the phase order, current evidence, decisions, and boundaries. The owner accepted baseline commit `e20e9f327f6b67bf62ca05b53c4185013f910b0b` and authorized implementation through B7; no additional planning gate is required between stages.
 
@@ -36,15 +36,15 @@ Owner-approved forward checkpoints. Only the active checkpoint may be implemente
 
 | Checkpoint | Name | Status |
 |---|---|---|
-| CP-09 | Production Composition | ACTIVE — scope recorded below; implementation not yet authorized |
-| CP-10 | Live Hermes End-to-End Proof | NOT_STARTED |
+| CP-09 | Production Composition | DONE — merged `4059e62876759430a8abe36e75cf4a226b0ff519` (PR #5), post-merge 565/565; limitations below |
+| CP-10 | Live Hermes End-to-End + Autonomous Correction Proof | ACTIVE — scope recorded below |
 | CP-11 | Agent-Agnostic Jira Gateway / Write Authority | NOT_STARTED |
 | CP-12 | Durable Wakeup and Real Restart Recovery | NOT_STARTED |
 | CP-13 | Multi-Process Locking / Concurrency Safety | NOT_STARTED |
 | CP-14 | Server-Side Merge Enforcement and Hardening | NOT_STARTED |
 | CP-15 | Release Candidate / Final Souza Loop Audit | NOT_STARTED |
 
-### CP-09 scope
+### CP-09 scope (DONE)
 
 **Goal:** replace the synthetic-only runtime composition with a production composition reachable from the CLI. Today `bin/loop-controller.js` supports only the `synthetic` profile.
 
@@ -62,6 +62,21 @@ Jira task/control plane
 Google Docs must **not** be required by CP-09.
 
 Open decisions that remain listed in "Loop Base v0 design boundary" (durable wakeup service, multi-process locking, server-side merge enforcement) are assigned to CP-12, CP-13 and CP-14 respectively, and the agent-agnostic Jira gateway to CP-11.
+
+### CP-09 recorded limitations
+
+CP-09 is a composition checkpoint proven with deterministic tests (no live Jira, Hermes or GitHub call). Limitations carried forward honestly:
+
+- `HermesAgentExecutor` has no correction round: review FINDINGS currently escalate to an owner decision. This is the first gap CP-10 closes.
+- No real model-backed reviewer exists. The production reviewer is `CommandIndependentReviewer`, a generic command boundary whose independence rests on the declared `reviewerId` differing from the commit author; the profile only rejects an identical executable. Choosing a genuinely independent reviewer is the Owner's responsibility.
+- The production path has not been exercised against live Jira, Hermes and GitHub together (CP-10).
+- Durable wakeup, multi-process locking and server-side merge enforcement remain CP-12, CP-13 and CP-14.
+
+### CP-10 scope
+
+**Goal:** prove the real production path with live evidence: Jira → deterministic controller → `HermesAgentExecutor` → Git workspace → GitHub PR → validation → independent review → correction when required → revalidation → independent re-review → merge → reconciliation/recovery → task closure. It must use the CP-09 production composition and no second synthetic composition.
+
+Required work: a minimal generic, bounded correction contract (findings go back to the implementation agent on the same task/worktree/branch; a new HEAD makes prior validation and review evidence stale; validation and review rerun on the new exact HEAD; the loop ends at CLEAN or a genuine stop condition and never loops without bound); a genuinely separate reviewer execution context with recorded identities; live proof A (clean path) and live proof B (finding → correction → CLEAN) on controlled test Jira data only. The owner is interrupted only for scope ambiguity, architecture, security, material cost, contradictory requirements, credential/access needs, non-deterministic external blockers, or repair failure beyond the configured safe limit. Google Docs is not required. Out of scope: CP-11 to CP-15.
 
 ## Mission and evidence boundary
 
