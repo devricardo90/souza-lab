@@ -219,14 +219,18 @@ export class GitHubLifecycle {
               workPackage, head: rev.head, base: rev.base, workspacePath: attempt().workspacePath, authorId: rev.authorId, changedFiles: rev.changedFiles,
             }));
             if (out.verdict === "UNAVAILABLE") throw transient("independent reviewer is unavailable", "REVIEW_UNAVAILABLE");
+            // Independence is enforced before anything is recorded: a review by the implementer's own identity is never evidence.
+            if (typeof rev.authorId === "string" && out.reviewerId.trim().toLowerCase() === rev.authorId.trim().toLowerCase()) throw ownerRequired(`reviewer ${out.reviewerId} is not independent of the implementation author`);
             review = self.gateStore.recordReview(exec, { head: rev.head, verdict: out.verdict, independent: true, unresolvedFindings: out.findings.length, publishedAt: self.clock(), reviewerId: out.reviewerId });
             if (out.verdict === "FINDINGS") self.gateStore.recordFindings(exec, rev.head, out.findings);
             await self.fault("after_review_recorded", { executionId: exec, head: rev.head, verdict: out.verdict });
             if (out.verdict === "CLEAN") return `review:${rev.head}`;
           }
-          // FINDINGS at this head: the work goes back through the executor's correction boundary.
-          if (self.gateStore.findingsCount(exec) > self.maxCorrections) throw ownerRequired(`review findings persist after ${self.maxCorrections} correction rounds`);
+          // FINDINGS at this head: the work goes back through the executor's correction boundary, unless a finding genuinely needs the owner.
           const findings = self.gateStore.getFindings(exec, rev.head) ?? [];
+          const needsOwner = findings.filter((f) => f.ownerDecision === true);
+          if (needsOwner.length > 0) throw ownerRequired(`review finding needs an owner decision: ${needsOwner.map((f) => `${f.id}: ${f.summary}`).join("; ")}`);
+          if (self.gateStore.findingsCount(exec) > self.maxCorrections) throw ownerRequired(`review findings persist after ${self.maxCorrections} correction rounds`);
           const next = await correct(rev, findings);
           return `correction:${rev.head}->${next.head}`;
         },

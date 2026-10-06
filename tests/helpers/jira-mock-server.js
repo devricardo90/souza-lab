@@ -107,7 +107,8 @@ const server = http.createServer((req, res) => {
       res.writeHead(204);
       return res.end();
     }
-    if (issue && req.method === "GET") return json(res, 200, { key: issue[1], fields: { status: stored(issue[1])?.fields.status ?? { name: state.status } } });
+    // project + stored description are served too (as real Jira does) so the production write guard can verify Loop ownership of an issue.
+    if (issue && req.method === "GET") return json(res, 200, { key: issue[1], fields: { status: stored(issue[1])?.fields.status ?? { name: state.status }, project: { key: issue[1].split("-")[0] }, ...(stored(issue[1])?.fields.description !== undefined ? { description: stored(issue[1]).fields.description } : {}) } });
     if (p === "/rest/api/3/search/jql") {
       const description = "Acceptance Criteria\n\n- AC-001: mock condition\n";
       const legacy = state.legacySearch ? [{ key: "LOOP-1", fields: { summary: "Mock", status: { name: state.status }, description, issuelinks: [] } }] : [];

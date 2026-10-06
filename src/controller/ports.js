@@ -21,6 +21,24 @@ export class AgentExecutor {
   async execute(_workPackage) { throw new Error(`${this.constructor.name}.execute is not implemented`); }
 }
 
+/**
+ * Generic agent-execution capability contract (executor-neutral; Hermes, Claude, Codex or any other executor can implement it).
+ * The Controller depends ONLY on this shape, never on a particular agent. Souza Loop owns every decision around it
+ * (task selection, branch/worktree identity, exact-HEAD tracking, retry and correction limits, stale-evidence invalidation,
+ * validation/review gates, merge eligibility, recovery, owner escalation); an executor only changes files in the workspace it is given.
+ *
+ *   execute(workPackage, { workspace, facts: null })                          implement the frozen work package
+ *   resume(workPackage, { workspace, facts })                                  continue interrupted, uncommitted work (optional capability)
+ *   correct(workPackage, { workspace, findings, round, facts })                address review findings with a NEW commit on the SAME branch (optional)
+ *
+ * Every capability returns an AgentResult (see validateAgentResult). workspace = { path, branch, baseSha }. The result is never
+ * trusted: the Loop re-reads HEAD, trailers and cleanliness from Git. Recovery never relies on an agent's conversational memory:
+ * the context is rebuilt from durable sources (Git, the work package, recorded findings).
+ */
+export function agentCapabilities(agent) {
+  return Object.freeze({ execute: typeof agent?.execute === "function", resume: typeof agent?.resume === "function", correct: typeof agent?.correct === "function" });
+}
+
 export function validateAgentResult(value) {
   const bad = (message) => Object.assign(new Error(`invalid agent result: ${message}`), { code: "AGENT_RESULT_INVALID", classification: "EXTERNAL_BLOCK", retryable: false });
   if (!value || typeof value !== "object") throw bad("not an object");
