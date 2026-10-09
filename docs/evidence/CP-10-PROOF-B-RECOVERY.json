@@ -1,0 +1,82 @@
+{
+  "event": "CP-10 Proof B interruption and resume",
+  "INTERRUPTION_CAUSE": "SYSTEM_LOW_MEMORY",
+  "REUSED_TASK": "LOOP-6",
+  "REUSED_PR": 16,
+  "REUSED_EXECUTION": "exec-7ceaae28c551e1b70b205dd6",
+  "taskId": "CP10B-261007172658",
+  "STATE_BEFORE_RECOVERY": {
+    "attemptStatus": "AGENT_RESULT_RECORDED",
+    "agentInvocations": 1,
+    "implementationHead": "50653cba5f363cb9865afa73b8a071257548b143",
+    "implementationCommitChangedFiles": [],
+    "note_empty_commit": "The Hermes implementation commit is EMPTY (no files). Preserved as live evidence; not repaired by the Owner.",
+    "controllerRowStatus": "EXECUTING",
+    "outbox": "JIRA_CREATE CONFIRMED (LOOP-6), attempt_count 1",
+    "pullRequest16": {
+      "state": "OPEN",
+      "headRefOid": "50653cba5f363cb9865afa73b8a071257548b143",
+      "files": [],
+      "ci": "SUCCESS"
+    },
+    "gate": {
+      "specReview": "CLEAN",
+      "validation_50653cba": "PASS (empty diff, 2/2 AC 'proved' by validator)",
+      "implementationReview_50653cba": "FINDINGS (F-LLM-1: diff not included in review request, AC cannot be verified; no ownerDecision flag => repairable)",
+      "findingsCount": 1
+    },
+    "hermes": {
+      "correctionTask": "t_a72122e6",
+      "status": "running (stale; last heartbeat 2026-10-07 19:43)",
+      "idempotencyKey": "loop-exec-7ceaae28c551e1b70b205dd6-correct-1-50653cba5f36"
+    },
+    "runDirName": "cp10-live-B-JGnLA1",
+    "memoryAtResume": "4.8 GB free of 32 GB; no CP-10 process running"
+  },
+  "resumeMechanism": "scripts/cp10-live-proof.js B --resume <runDir> reopens the existing run directory (state, clone, config, plan); the controller lifecycle resumes at requestReview: recorded FINDINGS -> correct() with the same idempotency key (re-attaches to the same Hermes task).",
+  "leftoverArtifacts": {
+    "LOOP-3": "failed CP-10 live-attempt artifact (not deleted)",
+    "LOOP-4": "failed CP-10 live-attempt artifact (not deleted)"
+  },
+  "INTERRUPTIONS": [
+    {
+      "n": 1,
+      "cause": "SYSTEM_LOW_MEMORY"
+    },
+    {
+      "n": 2,
+      "cause": "SYSTEM_SLEEP (Kernel-Power standby ~16:51-16:54 UTC; controller lease expired; exit 75 CONTROLLER_LEASE_LOST)",
+      "evidence": "CP-10-LIVE-CP10B-261007172658-resume1-sleep-interrupted.json"
+    }
+  ],
+  "STATE_RECONCILED_AFTER_RESTART": {
+    "resumed": true,
+    "reattachedHermesTask": "t_a72122e6 (same idempotency key)",
+    "jira": "LOOP-6 EXECUTING, outbox JIRA_CREATE CONFIRMED x1",
+    "pr": "#16 OPEN, same branch"
+  },
+  "DUPLICATE_JIRA_WRITES": 0,
+  "DUPLICATE_PRS": 0,
+  "DUPLICATE_IMPLEMENTATION_DISPATCH": 0,
+  "PROOF_B_STATUS": "STOPPED_INVALID_FIXTURE (not a pass, not FAILED_REVIEWER_FALSE_CLEAN)",
+  "finding": "Sandbox main (a1539ea, PR #15 from Proof A) already contains src/greet.js and test/greet.test.js, satisfying AC-001/AC-002. Every Proof B commit (50653cb, 8f02874, f547433) is therefore empty relative to base; the reviewer correctly returned FINDINGS (no diff) at 50653cb and 8f02874, and the correction round yields another empty commit. The scenario cannot converge to CLEAN by design of the fixture.",
+  "correctionRounds": [
+    {
+      "round": 1,
+      "from": "50653cb",
+      "to": "8f02874",
+      "hermesTask": "t_a72122e6",
+      "validation": "PASS",
+      "review": "FINDINGS"
+    },
+    {
+      "round": 2,
+      "from": "8f02874",
+      "to": "f547433",
+      "hermesTask": "t_77bd8e8b",
+      "review": "not run (stopped)"
+    }
+  ],
+  "prHead": "f547433d4feb21048419e3e85e382d1d831fbe35",
+  "merged": false
+}

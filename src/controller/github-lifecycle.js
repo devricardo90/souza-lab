@@ -128,6 +128,8 @@ export class GitHubLifecycle {
       await self.agent.correct(workPackage, { workspace: workspaceOf(a), findings, round, facts: resumeFacts });
       const after = new LocalGitProvider({ cwd: a.workspacePath, baseRef: a.baseSha, execute: self.gitRunner }).getRevision();
       if (after.head === rev.head || after.dirty) throw ownerRequired(`the correction round did not produce a clean new commit (head ${after.head}, dirty=${after.dirty})`);
+      // A correction must change something: a new commit that touches no file relative to the reviewed head fixes nothing.
+      if (self.gitRunner(["diff", "--name-only", `${rev.head}..${after.head}`], { cwd: a.workspacePath }).trim() === "") throw ownerRequired(`the correction round produced an empty commit (head ${after.head}); an empty diff addresses no finding`);
       await self.fault("after_correction_committed", { executionId: exec, from: rev.head, to: after.head });
       return after;
     };

@@ -27,6 +27,12 @@ export function ownerRequired(message, details = {}) {
   return Object.assign(new Error(message), { code: "EXECUTION_OWNER_DECISION_REQUIRED", classification: "OWNER_REQUIRED", retryable: false, ...details });
 }
 
+/**
+ * Agent-agnostic empty-diff guard. "Success" needs a task-relevant change: the files the branch's commits touch, as OBSERVED in Git (never the
+ * agent's own changedFiles claim), must be non-empty. An empty implementation is refused before it is recorded as a result.
+ */
+export const observedChangedFiles = (facts) => [...new Set((facts?.commits ?? []).flatMap((commit) => commit.files ?? []))];
+
 export class ExecutionRunner {
   /** faultPoints: test-only hooks {after_attempt_prepared, after_agent_running_persisted, after_agent_result_recorded}. */
   constructor({ attemptStore, agent, repoPath, workspacesDir, faultPoints = {} } = {}) {
@@ -75,9 +81,18 @@ export class ExecutionRunner {
       this.attemptStore.transition(attempt.executionId, "AGENT_RUNNING", "RECOVERY_REQUIRED", { observedGitState: observed, classification: "AMBIGUOUS_EXECUTION_STATE" });
       throw ownerRequired(`agent reported head ${result.head} but the workspace is at ${observed.head}`);
     }
+    this.rejectEmptyDiff(attempt, "AGENT_RUNNING", result, observed);
     this.attemptStore.recordResult(attempt.executionId, "AGENT_RUNNING", result, resumeFacts ? "AGENT_RESUME" : "AGENT", observed); // durable BEFORE it is consumed
     await this.fault("after_agent_result_recorded", { executionId: attempt.executionId });
     return result;
+  }
+
+  /** An implementation whose commits change no file is not an implementation: FAILED (terminal, nothing discarded), owner decision required. */
+  rejectEmptyDiff(attempt, from, result, observed) {
+    if (observedChangedFiles(observed).length > 0) return;
+    const reason = `the agent's commit ${result.head} changes no file relative to ${attempt.baseSha}; an empty diff cannot satisfy the acceptance criteria`;
+    this.attemptStore.transition(attempt.executionId, from, "FAILED", { observedGitState: observed, classification: "EMPTY_IMPLEMENTATION_DIFF", failureReason: reason });
+    throw ownerRequired(reason, { code: "EXECUTION_EMPTY_DIFF" });
   }
 
   async recover(workPackage, attempt) {
@@ -91,6 +106,7 @@ export class ExecutionRunner {
     if (classification === "NO_IMPLEMENTATION_PRESENT") return this.invoke(workPackage, { ...attempt, status }, status);
     if (classification === "COMMITTED_IMPLEMENTATION_PRESENT") {
       const result = validateAgentResult(resultFromGit(facts));
+      this.rejectEmptyDiff(attempt, status, result, facts);
       this.attemptStore.recordResult(attempt.executionId, status, result, "GIT_RECONCILIATION", facts);
       await this.fault("after_agent_result_recorded", { executionId: attempt.executionId });
       return result;

@@ -20,6 +20,15 @@ export class HermesExecutorError extends Error {
 const parseJson = (output, label) => { try { return JSON.parse(output); } catch { throw new HermesExecutorError(`Hermes ${label} returned malformed JSON`, { code: "HERMES_MALFORMED_OUTPUT", classification: "TASK_FAILURE" }); } };
 const statusOf = (task) => { const value = task?.status ?? task?.task?.status; return typeof value === "string" ? value.toLowerCase() : null; };
 
+/**
+ * The ownership trailers are the Loop's proof that a commit belongs to this execution, and they are parsed strictly (one trailer per line).
+ * Agents have been observed writing a commit message with literal backslash-n sequences, which puts the whole message on one line and makes
+ * the trailers invisible, so the instruction gives the exact command shape and forbids escape sequences.
+ */
+export function commitInstruction(workPackage) {
+  return `Commit with exactly this command shape so each trailer is its own real line: git commit -m "<short subject>" -m "Loop-Execution-Id: ${workPackage.executionId}" -m "Loop-Task-Id: ${workPackage.taskId}". Never write backslash-n or other escape sequences in a commit message.`;
+}
+
 /** Production AgentExecutor boundary. The command is injectable for deterministic tests. */
 export class HermesAgentExecutor extends AgentExecutor {
   /** env (optional): the exact environment the Hermes CLI is started with. Production passes an allowlisted one so no credential reaches it. */
@@ -30,7 +39,7 @@ export class HermesAgentExecutor extends AgentExecutor {
   idempotencyKey(workPackage, resume) { return `loop-${workPackage.executionId}-${resume ? "resume" : "execute"}`; }
   body(workPackage, context, resume) {
     const criteria = (workPackage.acceptanceCriteria ?? []).map(({ id, text }) => `- ${id}: ${text}`).join("\n");
-    return [`Loop task id: ${workPackage.taskId}`, `Execution id: ${workPackage.executionId}`, `Work package: ${workPackage.workPackageId}`, `Title: ${workPackage.title}`, "", "Acceptance Criteria:", criteria || "- (none)", "", `Repository: ${workPackage.repository.identity}`, `Base: ${context.workspace.baseSha}`, `Branch: ${context.workspace.branch}`, `Workspace: ${context.workspace.path}`, "", "Explicit scope: implement only this frozen WorkPackage in the supplied workspace. Do not modify other tasks, merge, push, or report success without a real Git commit.", `The implementation commit MUST contain these exact trailers: Loop-Execution-Id: ${workPackage.executionId} and Loop-Task-Id: ${workPackage.taskId}.`, resume ? "Recovery scope: preserve and build on all existing uncommitted work; never reset, clean, checkout over, or discard it." : ""].filter(Boolean).join("\n");
+    return [`Loop task id: ${workPackage.taskId}`, `Execution id: ${workPackage.executionId}`, `Work package: ${workPackage.workPackageId}`, `Title: ${workPackage.title}`, "", "Acceptance Criteria:", criteria || "- (none)", "", `Repository: ${workPackage.repository.identity}`, `Base: ${context.workspace.baseSha}`, `Branch: ${context.workspace.branch}`, `Workspace: ${context.workspace.path}`, "", "Explicit scope: implement only this frozen WorkPackage in the supplied workspace. Do not modify other tasks, merge, push, or report success without a real Git commit.", `The implementation commit MUST contain these exact trailers: Loop-Execution-Id: ${workPackage.executionId} and Loop-Task-Id: ${workPackage.taskId}.`, commitInstruction(workPackage), resume ? "Recovery scope: preserve and build on all existing uncommitted work; never reset, clean, checkout over, or discard it." : ""].filter(Boolean).join("\n");
   }
   async invoke(args, options = {}, label = "command") {
     try { return await this.run(args, options); } catch (cause) { throw new HermesExecutorError(`Hermes ${label} failed`, { code: cause?.code === "ENOENT" ? "HERMES_UNAVAILABLE" : "HERMES_COMMAND_FAILED", retryable: true }); }
@@ -64,7 +73,7 @@ export class HermesAgentExecutor extends AgentExecutor {
       "Acceptance Criteria (unchanged):", criteria, "",
       `Repository: ${workPackage.repository.identity}`, `Base: ${context.workspace.baseSha}`, `Branch: ${context.workspace.branch}`, `Workspace: ${context.workspace.path}`, "",
       `Explicit scope: address ONLY these findings, in the supplied workspace on the supplied branch. Add a NEW commit on top of ${previousHead}; never amend, rebase, reset, force or otherwise rewrite history. Do not push, merge, or touch other tasks, and do not report success without a real new Git commit.`,
-      `The correction commit MUST contain these exact trailers: Loop-Execution-Id: ${workPackage.executionId} and Loop-Task-Id: ${workPackage.taskId}.`,
+      `The correction commit MUST contain these exact trailers: Loop-Execution-Id: ${workPackage.executionId} and Loop-Task-Id: ${workPackage.taskId}.`, commitInstruction(workPackage),
       context.facts ? "Recovery scope: a previous correction attempt was interrupted; preserve and build on all existing uncommitted work; never reset, clean, checkout over, or discard it." : ""].join(NL).trimEnd();
   }
   /**

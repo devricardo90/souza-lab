@@ -80,6 +80,8 @@ test("the Hermes task carries the findings as data (private body file), the revi
   assert.ok(create.body.includes(r.h1) && create.body.includes(r.workspace.branch));
   assert.ok(create.body.includes(`Loop-Execution-Id: ${wp.executionId} and Loop-Task-Id: ${wp.taskId}.`));
   assert.match(create.body, /never amend, rebase, reset, force/);
+  assert.ok(create.body.includes(`git commit -m "<short subject>" -m "Loop-Execution-Id: ${wp.executionId}" -m "Loop-Task-Id: ${wp.taskId}"`), "the exact commit command shape is given");
+  assert.match(create.body, /Never write backslash-n or other escape sequences/);
   assert.ok(!/Recovery scope/.test(create.body));
 });
 

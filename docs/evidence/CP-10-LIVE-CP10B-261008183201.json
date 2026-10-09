@@ -1,0 +1,316 @@
+{
+  "proof": "B",
+  "taskId": "CP10B-261008183201",
+  "fixturePreflight": {
+    "ok": true,
+    "result": "FIXTURE_VALID",
+    "scenarioId": "farewell-finding-and-correction-path",
+    "baselineSha": "a1539ead108a39d39eb749c6f8ae35dd38f3a163",
+    "expectedNewFiles": [
+      "src/farewell.js",
+      "test/farewell.test.js"
+    ],
+    "checks": [
+      {
+        "name": "baseline SHA recorded",
+        "ok": true,
+        "detail": "a1539ead108a39d39eb749c6f8ae35dd38f3a163"
+      },
+      {
+        "name": "expected affected surface is declared",
+        "ok": true,
+        "detail": "src/farewell.js, test/farewell.test.js"
+      },
+      {
+        "name": "requested capability does not already exist at the baseline",
+        "ok": true,
+        "detail": "none of the expected files exist"
+      },
+      {
+        "name": "acceptance criteria are NOT already satisfied at the baseline",
+        "ok": true,
+        "detail": "probe exit 1 (0 would mean the acceptance criteria are already satisfied)"
+      },
+      {
+        "name": "task necessarily requires a non-empty diff",
+        "ok": true,
+        "detail": "every expected file is absent and the AC probe fails at the baseline"
+      }
+    ]
+  },
+  "runDirName": "<USERPROFILE>\\AppData\\Local\\Temp\\cp10-live-B-ASlz9w",
+  "generatedAt": "2026-10-08T18:45:55.936Z",
+  "controllerExit": {
+    "code": 0,
+    "signal": null
+  },
+  "identities": {
+    "IMPLEMENTER_IDENTITY": "loop-cp10-hermes@users.noreply.github.com",
+    "REVIEWER_IDENTITY": [
+      "claude-code-reviewer@loop.invalid"
+    ],
+    "IMPLEMENTER_EXECUTABLE": "<USERPROFILE>\\AppData\\Local\\hermes\\bin\\hermes.exe",
+    "REVIEWER_EXECUTABLE": "C:\\nvm4w\\nodejs\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe",
+    "implementerModel": "copilot/gpt-4.1 (hermes profile coder)",
+    "reviewerModel": "claude code headless (default model)"
+  },
+  "jira": {
+    "project": "LOOP",
+    "issueKey": "LOOP-7",
+    "outbox": [
+      {
+        "operation_id": "JIRA_CREATE:b9e73d1b9d4eb93959fa32244ab65daf5bc7ca26cb88a1476c2f5241979e890e",
+        "action": "JIRA_CREATE",
+        "task_id": "CP10B-261008183201",
+        "target_object": "LOOP",
+        "status": "CONFIRMED",
+        "attempt_count": 1
+      },
+      {
+        "operation_id": "JIRA_TRANSITION:ad38ca201d42b4584073388113311cba40c1a72d9547f5bf57c1528f876da777",
+        "action": "JIRA_TRANSITION",
+        "task_id": "CP10B-261008183201",
+        "target_object": "LOOP-7",
+        "status": "CONFIRMED",
+        "attempt_count": 1
+      }
+    ],
+    "controllerRows": [
+      {
+        "taskId": "CP10B-261008183201",
+        "status": "REMOTE_DONE_CONFIRMED"
+      }
+    ]
+  },
+  "github": {
+    "repo": "devricardo90/souza-loop-sandbox",
+    "branch": "loop/CP10B-261008183201/exec-8da72d908950879c7c1a90ea",
+    "pullRequests": [
+      {
+        "headRefOid": "e569f584c3ce6314bec98a0c59d5f8ddcaa26d2c",
+        "mergeCommit": {
+          "oid": "973deb2a512f788266a2fa67a65a705b948a0cbf"
+        },
+        "mergedAt": "2026-10-08T18:44:25Z",
+        "number": 17,
+        "state": "MERGED",
+        "title": "CP10B-261008183201: Add farewell function (finding and correction path)",
+        "url": "https://github.com/devricardo90/souza-loop-sandbox/pull/17"
+      }
+    ],
+    "openLoopPullRequestsAfter": []
+  },
+  "git": {
+    "executionId": "exec-8da72d908950879c7c1a90ea",
+    "baseSha": "a1539ead108a39d39eb749c6f8ae35dd38f3a163",
+    "firstHead": "32fe9b6dd6cf4429181af76f514911aa810085f7",
+    "finalHead": "e569f584c3ce6314bec98a0c59d5f8ddcaa26d2c",
+    "branchCommits": [
+      {
+        "sha": "e569f584c3ce6314bec98a0c59d5f8ddcaa26d2c",
+        "authorEmail": "loop-cp10-hermes@users.noreply.github.com",
+        "subject": "repo convention: add required Loop-Reviewed marker to src/farewell.js"
+      },
+      {
+        "sha": "32fe9b6dd6cf4429181af76f514911aa810085f7",
+        "authorEmail": "loop-cp10-hermes@users.noreply.github.com",
+        "subject": "Add farewell function and tests"
+      }
+    ]
+  },
+  "gate": {
+    "reviews": [
+      {
+        "head": "a1539ead108a39d39eb749c6f8ae35dd38f3a163",
+        "verdict": "CLEAN",
+        "reviewerId": "claude-code-reviewer@loop.invalid",
+        "at": "2026-10-08T18:33:52.567Z"
+      },
+      {
+        "head": "32fe9b6dd6cf4429181af76f514911aa810085f7",
+        "verdict": "FINDINGS",
+        "reviewerId": "claude-code-reviewer@loop.invalid",
+        "at": "2026-10-08T18:40:22.452Z"
+      },
+      {
+        "head": "e569f584c3ce6314bec98a0c59d5f8ddcaa26d2c",
+        "verdict": "CLEAN",
+        "reviewerId": "claude-code-reviewer@loop.invalid",
+        "at": "2026-10-08T18:43:49.812Z"
+      }
+    ],
+    "findings": [
+      {
+        "head": "32fe9b6dd6cf4429181af76f514911aa810085f7",
+        "findings": [
+          {
+            "id": "F-MARKER-1",
+            "summary": "Repository convention: every added or changed non-test .js file must begin with the exact first line `// Loop-Reviewed: CP10B-261008183201`; src/farewell.js does not. Add that line; do not change behaviour."
+          }
+        ]
+      }
+    ],
+    "validations": [
+      {
+        "head": "32fe9b6dd6cf4429181af76f514911aa810085f7",
+        "postMerge": false,
+        "result": "PASS"
+      },
+      {
+        "head": "e569f584c3ce6314bec98a0c59d5f8ddcaa26d2c",
+        "postMerge": false,
+        "result": "PASS"
+      },
+      {
+        "head": "973deb2a512f788266a2fa67a65a705b948a0cbf",
+        "postMerge": true,
+        "result": "PASS"
+      }
+    ]
+  },
+  "hermes": {
+    "board": "loop-cp10",
+    "assignee": "coder",
+    "tasks": [
+      {
+        "id": "t_a64ce4de",
+        "title": "Add farewell function (finding and correction path)",
+        "status": "done",
+        "assignee": "coder",
+        "started_at": 1791484457,
+        "completed_at": 1791484648
+      },
+      {
+        "id": "t_a72ece50",
+        "title": "Correct: Add farewell function (finding and correction path)",
+        "status": "done",
+        "assignee": "coder",
+        "started_at": 1791484834,
+        "completed_at": 1791484908
+      }
+    ],
+    "dispatcher": {
+      "ticks": 49,
+      "errors": 0,
+      "spawned": [
+        {
+          "taskId": "t_a64ce4de",
+          "assignee": "coder",
+          "at": "2026-10-08T18:34:22.322Z"
+        },
+        {
+          "taskId": "t_a72ece50",
+          "assignee": "coder",
+          "at": "2026-10-08T18:40:37.088Z"
+        }
+      ]
+    }
+  },
+  "stoppedEarly": null,
+  "correction": {
+    "rounds": 1,
+    "headsReviewed": [
+      "a1539ead108a39d39eb749c6f8ae35dd38f3a163",
+      "32fe9b6dd6cf4429181af76f514911aa810085f7",
+      "e569f584c3ce6314bec98a0c59d5f8ddcaa26d2c"
+    ],
+    "firstHeadStaleForFinalHead": true
+  },
+  "cost": {
+    "reviewerModelCalls": 2,
+    "reviewerMeasuredUsd": 0.2946,
+    "hermesNote": "Hermes ran on the GitHub Copilot provider (gpt-4.1); Copilot does not report per-call cost to Hermes, so it is not measured here",
+    "capUsd": 5
+  },
+  "reviewerLog": [
+    {
+      "at": "2026-10-08T18:33:52.104Z",
+      "kind": "spec",
+      "head": null,
+      "verdict": "CLEAN",
+      "findings": [],
+      "reviewerExecutable": "C:\\nvm4w\\nodejs\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe"
+    },
+    {
+      "at": "2026-10-08T18:40:22.431Z",
+      "kind": "model-call",
+      "head": "32fe9b6dd6cf4429181af76f514911aa810085f7",
+      "durationMs": 9853,
+      "costUsd": 0.26956399999999997,
+      "reviewerExecutable": "C:\\nvm4w\\nodejs\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe"
+    },
+    {
+      "at": "2026-10-08T18:40:22.435Z",
+      "kind": "implementation",
+      "head": "32fe9b6dd6cf4429181af76f514911aa810085f7",
+      "verdict": "FINDINGS",
+      "findings": [
+        {
+          "id": "F-MARKER-1",
+          "source": "policy"
+        }
+      ],
+      "reviewerExecutable": "C:\\nvm4w\\nodejs\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe"
+    },
+    {
+      "at": "2026-10-08T18:43:49.784Z",
+      "kind": "model-call",
+      "head": "e569f584c3ce6314bec98a0c59d5f8ddcaa26d2c",
+      "durationMs": 6702,
+      "costUsd": 0.0250834,
+      "reviewerExecutable": "C:\\nvm4w\\nodejs\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe"
+    },
+    {
+      "at": "2026-10-08T18:43:49.789Z",
+      "kind": "implementation",
+      "head": "e569f584c3ce6314bec98a0c59d5f8ddcaa26d2c",
+      "verdict": "CLEAN",
+      "findings": [],
+      "reviewerExecutable": "C:\\nvm4w\\nodejs\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe"
+    }
+  ],
+  "controllerLog": [
+    {
+      "event": "cycle",
+      "phase": "STARTED",
+      "outcome": "STARTED",
+      "code": null
+    },
+    {
+      "event": "cycle",
+      "phase": "MATERIALIZE",
+      "outcome": "CONTINUE",
+      "code": null
+    },
+    {
+      "event": "cycle",
+      "phase": "BUILD_WORK_PACKAGE",
+      "outcome": "CONTINUE",
+      "code": null
+    },
+    {
+      "event": "cycle",
+      "phase": "LOCAL_DONE",
+      "outcome": "CONTINUE",
+      "code": null
+    },
+    {
+      "event": "cycle",
+      "phase": "REMOTE_DONE_CONFIRMED",
+      "outcome": "CONTINUE",
+      "code": null
+    },
+    {
+      "event": "cycle",
+      "phase": "NEXT",
+      "outcome": "COMPLETED",
+      "code": null,
+      "detail": "plan v1 fully confirmed in Jira"
+    },
+    {
+      "event": "exit",
+      "exit": "COMPLETED"
+    }
+  ],
+  "stderrTail": ""
+}

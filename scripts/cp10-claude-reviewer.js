@@ -15,6 +15,7 @@
  */
 import { execFileSync, spawnSync } from "node:child_process";
 import { appendFileSync, mkdirSync } from "node:fs";
+import { buildReviewPrompt, emptyDiffFinding, isEmptyDiff } from "./lib/cp10-review-material.js";
 import { dirname } from "node:path";
 
 const argv = process.argv.slice(2);
@@ -24,7 +25,6 @@ const POLICY = opt("--policy", "none");
 const LOG = opt("--log");
 const BUDGET = opt("--max-budget-usd", "0.5");
 const REVIEWER_ID = "claude-code-reviewer@loop.invalid";
-const MAX_DIFF = 60000;
 
 const log = (entry) => { if (LOG) { mkdirSync(dirname(LOG), { recursive: true }); appendFileSync(LOG, `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`); } };
 const git = (cwd, args) => execFileSync("git", args, { cwd, encoding: "utf8", windowsHide: true, maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
@@ -64,14 +64,14 @@ process.stdin.on("end", () => {
   }
 
   // ---- independent LLM review of the diff (no tools, diff text only) ----
-  let diff = git(workspacePath, ["diff", "--no-color", `${base}..${head}`]);
-  if (diff.length > MAX_DIFF) diff = `${diff.slice(0, MAX_DIFF)}\n[diff truncated]`;
-  const criteria = (workPackage.acceptanceCriteria ?? []).map((c) => `- ${c.id}: ${c.text}`).join("\n");
+  const diff = git(workspacePath, ["diff", "--no-color", `${base}..${head}`]);
+  // Fail closed: an empty diff is never sent to a model (it would surface as a wrapper problem); it is a deterministic finding.
+  if (isEmptyDiff(diff)) return out([...policyFindings, emptyDiffFinding(base, head)], "policy");
   const system = "You are an independent code reviewer in an automated delivery loop. You review ONLY the diff you are given against the acceptance criteria. "
     + "Report only concrete defects that violate an acceptance criterion or are clear correctness bugs, each fixable by the implementer without a product, scope, architecture or security decision. "
     + "Do not report style preferences, missing extras, or repository conventions that are not in the criteria. If you are unsure, do not report it. "
     + 'Answer with ONE JSON object and nothing else: {"findings":[{"id":"F-LLM-1","summary":"...","ownerDecision":false}]}. An empty findings array means the change is acceptable. Set ownerDecision true only if fixing the finding needs a human decision.';
-  const prompt = `Task ${workPackage.taskId}: ${workPackage.title}\n\nAcceptance criteria:\n${criteria || "- (none)"}\n\nDiff under review (${base.slice(0, 8)}..${head.slice(0, 8)}):\n${diff}`;
+  const prompt = buildReviewPrompt({ workPackage, base, head, diff });
   const started = Date.now();
   const run = spawnSync(CLAUDE, ["-p", "--output-format", "json", "--no-session-persistence", "--tools", "", "--max-budget-usd", BUDGET, "--system-prompt", system], {
     input: prompt, encoding: "utf8", windowsHide: true, timeout: 300000, maxBuffer: 16 * 1024 * 1024,

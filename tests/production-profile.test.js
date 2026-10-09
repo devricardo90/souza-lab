@@ -3,7 +3,7 @@ import test, { after, before, beforeEach } from "node:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BIN, ENV, TWO_TASKS, runProcess, startMock, workspace } from "./helpers/controller-harness.js";
-import { buildProductionController, childEnvironment, executableExists, validateProductionConfig, ProductionProfileError } from "../src/composition/production-profile.js";
+import { buildProductionController, runtimeOptionsFor, childEnvironment, executableExists, validateProductionConfig, ProductionProfileError } from "../src/composition/production-profile.js";
 import { buildControllerForProfile } from "../src/controller/profile-selector.js";
 import { scrubText, secretValues } from "../src/controller/log-redaction.js";
 import { JiraSyncClient } from "../src/adapters/jira-sync-client.js";
@@ -178,6 +178,14 @@ test("6b. every optional value is type- and range-checked; nothing bad is silent
   // valid optionals are accepted
   const ok = build({ ...prodConfig(), timings: { instanceLeaseTtlMs: 5000, idlePollMs: 10 }, ownerId: "owner-1", outboxClaimTtlMs: 1000, heartbeatWorker: false, exitOnCompleted: true, passEnv: ["MY_OPTIONAL_VAR"] });
   ok.close();
+});
+
+test("6b-2. the per-action timeout is configurable and bounded; unset keeps the runtime defaults; the lease always outlives the longest action", () => {
+  assert.deepEqual(runtimeOptionsFor({}), {});
+  assert.deepEqual(runtimeOptionsFor(undefined), {});
+  assert.deepEqual(runtimeOptionsFor({ actionTimeoutMs: 1800000 }), { timeoutMs: 1800000, leaseTtlMs: 2100000 });
+  for (const bad of [0, 999, 14400001, "x", 1.5]) rejects({ ...prodConfig(), timings: { actionTimeoutMs: bad } }, PROD_ENV, /actionTimeoutMs/);
+  for (const ok of [1000, 1800000, 14400000]) build({ ...prodConfig(), workspaceDir: join(ws.dir, `state-at-${ok}`), timings: { actionTimeoutMs: ok } }).close();
 });
 
 test("6c. plain http is allowed only for a loopback endpoint (credentials never cross a network in cleartext)", () => {

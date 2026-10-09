@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -166,6 +167,49 @@ test("E: agent committed, died before reporting -> Git reconciliation adopts the
   assert.equal(c.repo.run(["rev-list", "--count", `main..${attempt.branch}`]), "1");
   assert.equal(result.head, c.repo.run(["rev-parse", attempt.branch]));
   assert.deepEqual(result.changedFiles, ["impl/TASK-001.txt"]);
+});
+
+/** An agent-agnostic claim of success with no change: it commits with the right trailers but touches no file, and still CLAIMS a changed file. */
+class EmptyCommitAgent extends SyntheticGitAgent {
+  async execute(workPackage, { workspace }) {
+    this.record({ mode: "execute", taskId: workPackage.taskId });
+    const body = `empty
+
+Loop-Execution-Id: ${workPackage.executionId}
+Loop-Task-Id: ${workPackage.taskId}
+`;
+    execFileSync("git", ["-c", "user.name=Agent", "-c", "user.email=agent@example.invalid", "commit", "-q", "--allow-empty", "-F", "-"], { cwd: workspace.path, input: body, windowsHide: true });
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: workspace.path, encoding: "utf8", windowsHide: true }).trim();
+    return { head, base: workspace.baseSha, branch: workspace.branch, authorId: "agent@example.invalid", changedFiles: ["src/claimed-but-not-in-git.js"] };
+  }
+}
+
+test("empty-diff guard: an implementation whose commits change no file is refused (FAILED, owner decision), judged from Git, not from the agent's claim", async (t) => {
+  const c = fixture(t);
+  const agent = new EmptyCommitAgent({ recordPath: join(c.dir, "calls.jsonl") });
+  await assert.rejects(c.runner({ agent }).ensureImplementation(WP), { code: "EXECUTION_EMPTY_DIFF", classification: "OWNER_REQUIRED" });
+  const attempt = c.open().get(WP.executionId);
+  assert.deepEqual([attempt.status, attempt.classification, attempt.agentResult], ["FAILED", "EMPTY_IMPLEMENTATION_DIFF", null]);
+  assert.match(attempt.failureReason, /changes no file/);
+  assert.equal(c.repo.run(["rev-list", "--count", `main..${attempt.branch}`]), "1", "the empty commit is preserved, not discarded");
+  // a restart never turns it into a recorded success, and never calls the agent again
+  await assert.rejects(c.runner({ agent: c.agent() }).ensureImplementation(WP), { code: "EXECUTION_OWNER_DECISION_REQUIRED" });
+  assert.deepEqual(c.calls().map((x) => x.mode), ["execute"]);
+});
+
+test("empty-diff guard: the same refusal applies when the empty commit is only discovered by Git reconciliation after a crash", async (t) => {
+  const c = fixture(t);
+  const dying = new (class extends EmptyCommitAgent { async execute(wp, ctx) { await super.execute(wp, ctx); throw new Crash("died after empty commit"); } })({ recordPath: join(c.dir, "calls.jsonl") });
+  await assert.rejects(c.runner({ agent: dying }).ensureImplementation(WP), Crash);
+  await assert.rejects(c.runner({ agent: c.agent() }).ensureImplementation(WP), { code: "EXECUTION_EMPTY_DIFF" });
+  assert.equal(c.open().get(WP.executionId).status, "FAILED");
+});
+
+test("empty-diff guard: a non-empty implementation is unaffected", async (t) => {
+  const c = fixture(t);
+  const result = await c.runner({ agent: c.agent() }).ensureImplementation(WP);
+  assert.deepEqual(result.changedFiles, ["impl/TASK-001.txt"]);
+  assert.equal(c.open().get(WP.executionId).status, "AGENT_RESULT_RECORDED");
 });
 
 test("ambiguous state (a foreign commit in the execution branch) -> OWNER_DECISION_REQUIRED, no agent call, workspace untouched", async (t) => {

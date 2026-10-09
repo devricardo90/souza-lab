@@ -55,7 +55,7 @@ const SCHEMA = {
   agent: { required: ["kind", "command"], optional: ["board", "coderAssignee", "pollMs", "maxPolls"] },
   validation: { required: ["command"], optional: ["args", "timeoutMs"] },
   review: { required: ["command"], optional: ["args", "timeoutMs"] },
-  timings: { required: [], optional: ["instanceLeaseTtlMs", "defaultWaitMs", "idlePollMs", "standbyPollMs", "blockedPollMs"] },
+  timings: { required: [], optional: ["instanceLeaseTtlMs", "defaultWaitMs", "idlePollMs", "standbyPollMs", "blockedPollMs", "actionTimeoutMs"] },
 };
 /**
  * Executor kinds the production profile can compose. The Controller only ever sees the generic AgentExecutor contract
@@ -69,6 +69,7 @@ const AGENT_EXECUTORS = Object.freeze({
     create: (agent, overrides, childEnv) => new HermesAgentExecutor({ command: agent.command, board: agent.board, coderAssignee: agent.coderAssignee, pollMs: agent.pollMs, maxPolls: agent.maxPolls, run: overrides.hermesRun ?? null, env: childEnv }),
   },
 });
+const MAX_ACTION_TIMEOUT_MS = 4 * 60 * 60 * 1000;
 const nonEmpty = (v) => typeof v === "string" && v.trim() !== "";
 const posInt = (v) => Number.isSafeInteger(v) && v > 0;
 const bad = (message) => { throw new ProductionProfileError(message); };
@@ -117,7 +118,7 @@ export function validateProductionConfig(config, env = process.env) {
   optional(config, "heartbeatWorker", "", (v) => typeof v === "boolean", "a boolean");
   optional(config, "outboxClaimTtlMs", "", posInt, "a positive integer");
   optional(config, "passEnv", "", (v) => Array.isArray(v) && v.every((n) => typeof n === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(n) && !/^LOOP_JIRA_/.test(n)), "an array of environment variable names (never LOOP_JIRA_*)");
-  for (const key of SCHEMA.timings.optional) optional(config.timings ?? {}, key, "timings.", (v) => Number.isSafeInteger(v) && v >= (key === "instanceLeaseTtlMs" ? 100 : 1), key === "instanceLeaseTtlMs" ? "an integer of at least 100" : "a positive integer");
+  for (const key of SCHEMA.timings.optional) optional(config.timings ?? {}, key, "timings.", (v) => Number.isSafeInteger(v) && v >= (key === "instanceLeaseTtlMs" ? 100 : key === "actionTimeoutMs" ? 1000 : 1) && (key !== "actionTimeoutMs" || v <= MAX_ACTION_TIMEOUT_MS), key === "instanceLeaseTtlMs" ? "an integer of at least 100" : key === "actionTimeoutMs" ? `an integer from 1000 to ${MAX_ACTION_TIMEOUT_MS}` : "a positive integer");
 
   // GitHub identity (the providers also reject these, but as TypeErrors)
   if (!/^[A-Za-z0-9-]+$/.test(config.github.owner)) bad("production config.github.owner is not a valid GitHub owner");
@@ -203,6 +204,15 @@ function assertEnvironmentReady(config, env) {
   if (sameFile(resolveExecutable(config.agent.command, env), resolveExecutable(config.review.command, env))) bad("production config.review.command resolves to the same executable as agent.command: the reviewer must be a separate execution context from the implementer");
 }
 
+/**
+ * Runtime options for one work-package execution. The runtime bounds EVERY action (the agent run, validation, review) by one timeout;
+ * its default suits instant fakes, but a real agent runs for minutes, so production sets it explicitly. The execution lease outlives
+ * the longest action by a fixed margin. Without actionTimeoutMs the runtime defaults apply unchanged.
+ */
+export function runtimeOptionsFor(timings = {}) {
+  return timings.actionTimeoutMs === undefined ? {} : { timeoutMs: timings.actionTimeoutMs, leaseTtlMs: timings.actionTimeoutMs + 300000 };
+}
+
 /** Variables a child process (agent-authored validation, the reviewer) may inherit: an ALLOWLIST plus the owner's explicit passEnv. */
 const BASE_ENV_NAMES = ["PATH", "PATHEXT", "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL", "TZ", "TERM", "USER", "USERNAME"];
 export function childEnvironment(env = process.env, passEnv = []) {
@@ -260,6 +270,7 @@ export function buildProductionController(rawConfig, env = process.env, override
       heartbeatWorker: config.heartbeatWorker ?? !overrides.clock,
       runtimeFactory: (workPackage) => createWorkPackageRuntime({
         workPackage, directory: join(dir, "executions"), scope: lifecycle.scope(workPackage), leaseProvider, ownerId: config.workspaceId, agentExecutor: agent, executionRunner, clock,
+        runtimeOptions: runtimeOptionsFor(config.timings),
       }),
     });
     return { controller, close, agent, reviewer, validator, jira, lifecycle, executionRunner, leaseProvider, outboxExecutor, stores: { planStore, outboxStore, controllerStore, attemptStore, gateStore } };
