@@ -33,5 +33,6 @@ export function validateReviewerOutput(value) {
   const findings = Array.isArray(value.findings) ? value.findings : [];
   if (value.verdict === "FINDINGS" && findings.length === 0) throw bad("FINDINGS needs at least one finding");
   if (value.verdict === "CLEAN" && findings.length > 0) throw bad("CLEAN cannot carry findings");
-  return Object.freeze({ verdict: value.verdict, reviewerId: value.reviewerId, findings: Object.freeze(findings.map((f) => Object.freeze({ id: String(f.id ?? ""), summary: String(f.summary ?? "") }))) });
+  // A finding may declare that it needs an owner decision (scope, architecture, security, cost...). Absent means repairable by the implementer.
+  return Object.freeze({ verdict: value.verdict, reviewerId: value.reviewerId, findings: Object.freeze(findings.map((f) => Object.freeze({ id: String(f.id ?? ""), summary: String(f.summary ?? ""), ...(f.ownerDecision === true ? { ownerDecision: true } : {}) }))) });
 }

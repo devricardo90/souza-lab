@@ -1,0 +1,760 @@
+{
+  "proof": "A",
+  "taskId": "CP10A-261007154658",
+  "generatedAt": "2026-10-07T16:58:37.214Z",
+  "controllerExit": {
+    "code": null,
+    "signal": "SIGTERM"
+  },
+  "identities": {
+    "IMPLEMENTER_IDENTITY": null,
+    "REVIEWER_IDENTITY": [
+      "claude-code-reviewer@loop.invalid"
+    ],
+    "IMPLEMENTER_EXECUTABLE": "<USERPROFILE>",
+    "REVIEWER_EXECUTABLE": "C:\\nvm4w\\nodejs\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe",
+    "implementerModel": "copilot/gpt-4.1 (hermes profile coder)",
+    "reviewerModel": "claude code headless (default model)"
+  },
+  "jira": {
+    "project": "LOOP",
+    "issueKey": "LOOP-3",
+    "outbox": [
+      {
+        "operation_id": "JIRA_CREATE:ce10296e29068e7dca2f7660c78255eb402bc6cf2c615754034ef2e92183555f",
+        "action": "JIRA_CREATE",
+        "task_id": "CP10A-261007154658",
+        "target_object": "LOOP",
+        "status": "CONFIRMED",
+        "attempt_count": 1
+      }
+    ],
+    "controllerRows": [
+      {
+        "taskId": "CP10A-261007154658",
+        "status": "BLOCKED"
+      }
+    ],
+    "leftInJira": "the test issue was created and confirmed; it is NOT deleted (no Jira deletion is ever performed) and remains in its initial status"
+  },
+  "github": {
+    "repo": "devricardo90/souza-loop-sandbox",
+    "branch": "loop/CP10A-261007154658/exec-2adcb2b6e17e1a7612cb4844",
+    "pullRequests": [],
+    "openLoopPullRequestsAfter": []
+  },
+  "git": {
+    "executionId": "exec-2adcb2b6e17e1a7612cb4844",
+    "baseSha": "1e02a720ec0dc6749c8baf44a250e861e04902d1",
+    "firstHead": null,
+    "finalHead": null,
+    "branchCommits": []
+  },
+  "gate": {
+    "reviews": [
+      {
+        "head": "1e02a720ec0dc6749c8baf44a250e861e04902d1",
+        "verdict": "CLEAN",
+        "reviewerId": "claude-code-reviewer@loop.invalid",
+        "at": "2026-10-07T15:47:47.005Z"
+      }
+    ],
+    "findings": [],
+    "validations": []
+  },
+  "hermes": {
+    "board": "loop-cp10",
+    "assignee": "coder",
+    "tasks": [
+      {
+        "id": "t_43d435be",
+        "title": "Add greet function (clean path)",
+        "status": "ready",
+        "assignee": "coder",
+        "started_at": null,
+        "completed_at": null
+      }
+    ]
+  },
+  "correction": {
+    "rounds": 0,
+    "headsReviewed": [
+      "1e02a720ec0dc6749c8baf44a250e861e04902d1"
+    ],
+    "firstHeadStaleForFinalHead": false
+  },
+  "cost": {
+    "reviewerModelCalls": 0,
+    "reviewerMeasuredUsd": 0,
+    "hermesNote": "Hermes ran on the GitHub Copilot provider (gpt-4.1); Copilot does not report per-call cost to Hermes, so it is not measured here",
+    "capUsd": 5
+  },
+  "reviewerLog": [
+    {
+      "at": "2026-10-07T15:47:46.591Z",
+      "kind": "spec",
+      "head": null,
+      "verdict": "CLEAN",
+      "findings": [],
+      "reviewerExecutable": "C:\\nvm4w\\nodejs\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe"
+    }
+  ],
+  "controllerLog": [
+    {
+      "event": "cycle",
+      "phase": "STARTED",
+      "outcome": "STARTED",
+      "code": null
+    },
+    {
+      "event": "cycle",
+      "phase": "MATERIALIZE",
+      "outcome": "CONTINUE",
+      "code": null
+    },
+    {
+      "event": "cycle",
+      "phase": "BUILD_WORK_PACKAGE",
+      "outcome": "CONTINUE",
+      "code": null
+    },
+    {
+      "event": "cycle",
+      "phase": "EXECUTE",
+      "outcome": "RETRY_EXTERNAL",
+      "code": null,
+      "detail": "READY_TO_IMPLEMENT"
+    },
+    {
+      "event": "cycle",
+      "phase": "EXECUTE",
+      "outcome": "RETRY_EXTERNAL",
+      "code": null,
+      "detail": "READY_TO_IMPLEMENT"
+    },
+    {
+      "event": "cycle",
+      "phase": "EXECUTE",
+      "outcome": "RETRY_EXTERNAL",
+      "code": null,
+      "detail": "READY_TO_IMPLEMENT"
+    },
+    {
+      "event": "cycle",
+      "phase": "EXECUTE",
+      "outcome": "RETRY_EXTERNAL",
+      "code": null,
+      "detail": "READY_TO_IMPLEMENT"
+    },
+    {
+      "event": "cycle",
+      "phase": "EXECUTE",
+      "outcome": "BLOCK_TASK",
+      "code": null,
+      "detail": "BLOCKED_EXTERNAL in READY_TO_IMPLEMENT"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    },
+    {
+      "event": "cycle",
+      "phase": "SELECT_TASK",
+      "outcome": "OWNER_DECISION_REQUIRED",
+      "code": null,
+      "detail": "CP10A-261007154658:blocked"
+    }
+  ],
+  "stderrTail": "",
+  "attempt": "1 of proof A: FAILED by the harness, not by the protocol (see docs/evidence/CP-10-LIVE-PROOF-SUMMARY.md)",
+  "failureCauses": [
+    "hermes kanban daemon is deprecated and exited at once, so no worker was ever dispatched",
+    "the runtime action timeout defaulted to 20s; production could not set it (fixed: timings.actionTimeoutMs)",
+    "the orchestrator waited out its 50-minute timeout on a persistent block (fixed: stops after 3 consecutive blocked cycles)",
+    "evidence recorded the Jira project key as the issue key (fixed: read from the controller store)"
+  ]
+}

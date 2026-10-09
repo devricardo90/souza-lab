@@ -1,4 +1,4 @@
-import { accessSync, constants, readFileSync, statSync } from "node:fs";
+import { accessSync, constants, readFileSync, realpathSync, statSync } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
 import { JiraSyncClient } from "../adapters/jira-sync-client.js";
 import { JiraOutboxExecutor } from "../adapters/jira-outbox-executor.js";
@@ -51,12 +51,25 @@ const SCHEMA = {
   completion: { required: ["doneStatusName", "transitionName"], optional: ["expectedCurrentStatusNames"] },
   repository: { required: ["identity", "baseRef"], optional: [] },
   git: { required: ["repoPath"], optional: [] },
-  github: { required: ["owner", "repo", "baseBranch", "workflowIdentity"], optional: ["timeoutMs"] },
-  agent: { required: ["kind", "command", "board", "coderAssignee"], optional: ["pollMs", "maxPolls"] },
+  github: { required: ["owner", "repo", "baseBranch", "workflowIdentity"], optional: ["timeoutMs", "maxCorrections"] },
+  agent: { required: ["kind", "command"], optional: ["board", "coderAssignee", "pollMs", "maxPolls"] },
   validation: { required: ["command"], optional: ["args", "timeoutMs"] },
   review: { required: ["command"], optional: ["args", "timeoutMs"] },
-  timings: { required: [], optional: ["instanceLeaseTtlMs", "defaultWaitMs", "idlePollMs", "standbyPollMs", "blockedPollMs"] },
+  timings: { required: [], optional: ["instanceLeaseTtlMs", "defaultWaitMs", "idlePollMs", "standbyPollMs", "blockedPollMs", "actionTimeoutMs"] },
 };
+/**
+ * Executor kinds the production profile can compose. The Controller only ever sees the generic AgentExecutor contract
+ * (controller/ports.js); this table is the single place a concrete executor is named. Adding a Claude or Codex executor means
+ * adding an entry here (plus its own config keys), not touching the Controller. The Hermes-specific keys (board, coderAssignee)
+ * are required only for kind "hermes".
+ */
+const AGENT_EXECUTORS = Object.freeze({
+  hermes: {
+    required: ["board", "coderAssignee"],
+    create: (agent, overrides, childEnv) => new HermesAgentExecutor({ command: agent.command, board: agent.board, coderAssignee: agent.coderAssignee, pollMs: agent.pollMs, maxPolls: agent.maxPolls, run: overrides.hermesRun ?? null, env: childEnv }),
+  },
+});
+const MAX_ACTION_TIMEOUT_MS = 4 * 60 * 60 * 1000;
 const nonEmpty = (v) => typeof v === "string" && v.trim() !== "";
 const posInt = (v) => Number.isSafeInteger(v) && v > 0;
 const bad = (message) => { throw new ProductionProfileError(message); };
@@ -96,7 +109,7 @@ export function validateProductionConfig(config, env = process.env) {
     ["jira.completion.doneStatusName", config.jira.completion.doneStatusName], ["jira.completion.transitionName", config.jira.completion.transitionName],
     ["repository.identity", config.repository.identity], ["repository.baseRef", config.repository.baseRef], ["git.repoPath", config.git.repoPath],
     ["github.owner", config.github.owner], ["github.repo", config.github.repo], ["github.baseBranch", config.github.baseBranch], ["github.workflowIdentity", config.github.workflowIdentity],
-    ["agent.command", config.agent.command], ["agent.board", config.agent.board], ["agent.coderAssignee", config.agent.coderAssignee],
+    ["agent.command", config.agent.command],
     ["validation.command", config.validation.command], ["review.command", config.review.command]]) if (!nonEmpty(value)) bad(`production config.${path} must be a non-empty string`);
 
   // top-level optionals
@@ -105,16 +118,20 @@ export function validateProductionConfig(config, env = process.env) {
   optional(config, "heartbeatWorker", "", (v) => typeof v === "boolean", "a boolean");
   optional(config, "outboxClaimTtlMs", "", posInt, "a positive integer");
   optional(config, "passEnv", "", (v) => Array.isArray(v) && v.every((n) => typeof n === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(n) && !/^LOOP_JIRA_/.test(n)), "an array of environment variable names (never LOOP_JIRA_*)");
-  for (const key of SCHEMA.timings.optional) optional(config.timings ?? {}, key, "timings.", (v) => Number.isSafeInteger(v) && v >= (key === "instanceLeaseTtlMs" ? 100 : 1), key === "instanceLeaseTtlMs" ? "an integer of at least 100" : "a positive integer");
+  for (const key of SCHEMA.timings.optional) optional(config.timings ?? {}, key, "timings.", (v) => Number.isSafeInteger(v) && v >= (key === "instanceLeaseTtlMs" ? 100 : key === "actionTimeoutMs" ? 1000 : 1) && (key !== "actionTimeoutMs" || v <= MAX_ACTION_TIMEOUT_MS), key === "instanceLeaseTtlMs" ? "an integer of at least 100" : key === "actionTimeoutMs" ? `an integer from 1000 to ${MAX_ACTION_TIMEOUT_MS}` : "a positive integer");
 
   // GitHub identity (the providers also reject these, but as TypeErrors)
   if (!/^[A-Za-z0-9-]+$/.test(config.github.owner)) bad("production config.github.owner is not a valid GitHub owner");
   if (!/^[A-Za-z0-9._-]+$/.test(config.github.repo)) bad("production config.github.repo is not a valid GitHub repository name");
   if (!config.github.workflowIdentity.startsWith(".github/workflows/")) bad("production config.github.workflowIdentity must be a .github/workflows/ path");
   optional(config.github, "timeoutMs", "github.", posInt, "a positive integer");
+  // the correction loop is always bounded: the number of correction rounds before the owner is asked
+  optional(config.github, "maxCorrections", "github.", (v) => Number.isSafeInteger(v) && v >= 1 && v <= 10, "an integer from 1 to 10");
 
   // agent / validation / review
-  if (config.agent.kind !== "hermes") bad('production config.agent.kind must be "hermes"');
+  const executor = Object.hasOwn(AGENT_EXECUTORS, config.agent.kind) ? AGENT_EXECUTORS[config.agent.kind] : null;
+  if (!executor) bad(`production config.agent.kind must be one of: ${Object.keys(AGENT_EXECUTORS).join(", ")}`);
+  for (const key of executor.required) if (!nonEmpty(config.agent[key])) bad(`production config.agent.${key} is required for agent.kind "${config.agent.kind}"`);
   for (const key of ["pollMs", "maxPolls"]) optional(config.agent, key, "agent.", posInt, "a positive integer");
   for (const key of ["validation", "review"]) {
     const section = config[key];
@@ -149,11 +166,11 @@ export function validateProductionConfig(config, env = process.env) {
 }
 
 /**
- * True when `command` names a file this process can actually execute WITHOUT a shell (absolute or relative path, or found on PATH).
+ * Resolves `command` to the real path of a file this process can actually execute WITHOUT a shell, or null. (absolute or relative path, or found on PATH).
  * Commands are spawned as an argv with shell:false, so on Windows only real binaries (.exe, .com) qualify: a .cmd/.bat shim
  * (npm.cmd and the like) would pass a plain existence check and then fail at every cycle. On POSIX the execute bit is required.
  */
-export function executableExists(command, env = process.env) {
+export function resolveExecutable(command, env = process.env) {
   const windows = process.platform === "win32";
   const runnable = (path) => {
     try {
@@ -163,11 +180,17 @@ export function executableExists(command, env = process.env) {
       return true;
     } catch { return false; }
   };
-  if (isAbsolute(command) || /[\\/]/.test(command)) return runnable(command);
+  const real = (path) => { try { return realpathSync(path); } catch { return path; } };
+  if (isAbsolute(command) || /[\\/]/.test(command)) return runnable(command) ? real(command) : null;
   const exts = windows ? ["", ".exe", ".com"] : [""];
-  for (const dir of String(env.PATH ?? env.Path ?? "").split(delimiter).filter(Boolean)) for (const ext of exts) if (runnable(join(dir, command + ext))) return true;
-  return false;
+  for (const dir of String(env.PATH ?? env.Path ?? "").split(delimiter).filter(Boolean)) for (const ext of exts) if (runnable(join(dir, command + ext))) return real(join(dir, command + ext));
+  return null;
 }
+
+/** True when `command` resolves to an executable runnable without a shell. */
+export function executableExists(command, env = process.env) { return resolveExecutable(command, env) !== null; }
+
+const sameFile = (a, b) => (process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b);
 
 /** Startup facts the configuration depends on. Fail closed here rather than at the first cycle. */
 function assertEnvironmentReady(config, env) {
@@ -176,6 +199,18 @@ function assertEnvironmentReady(config, env) {
   for (const [path, command] of [["agent.command", config.agent.command], ["validation.command", config.validation.command], ["review.command", config.review.command]]) {
     if (!executableExists(command, env)) bad(`production config.${path} is not an existing executable that can be run without a shell (on Windows only .exe/.com; .cmd/.bat shims are not supported)`);
   }
+  // Independence of the review context: the reviewer must not resolve to the same real binary as the implementing agent (a different
+  // spelling or path of the same executable does not make it a different context).
+  if (sameFile(resolveExecutable(config.agent.command, env), resolveExecutable(config.review.command, env))) bad("production config.review.command resolves to the same executable as agent.command: the reviewer must be a separate execution context from the implementer");
+}
+
+/**
+ * Runtime options for one work-package execution. The runtime bounds EVERY action (the agent run, validation, review) by one timeout;
+ * its default suits instant fakes, but a real agent runs for minutes, so production sets it explicitly. The execution lease outlives
+ * the longest action by a fixed margin. Without actionTimeoutMs the runtime defaults apply unchanged.
+ */
+export function runtimeOptionsFor(timings = {}) {
+  return timings.actionTimeoutMs === undefined ? {} : { timeoutMs: timings.actionTimeoutMs, leaseTtlMs: timings.actionTimeoutMs + 300000 };
 }
 
 /** Variables a child process (agent-authored validation, the reviewer) may inherit: an ALLOWLIST plus the owner's explicit passEnv. */
@@ -220,7 +255,7 @@ export function buildProductionController(rawConfig, env = process.env, override
     });
     const outboxExecutor = new JiraOutboxExecutor({ store: outboxStore, jira, workerId: ownerId, claimTtlMs: config.outboxClaimTtlMs ?? 60000, clock, relationship });
 
-    const agent = new HermesAgentExecutor({ command: config.agent.command, board: config.agent.board, coderAssignee: config.agent.coderAssignee, pollMs: config.agent.pollMs, maxPolls: config.agent.maxPolls, run: overrides.hermesRun ?? null });
+    const agent = AGENT_EXECUTORS[config.agent.kind].create(config.agent, overrides, childEnv);
     const validator = new WorkspaceCommandValidator({ command: config.validation.command, args: config.validation.args ?? [], timeoutMs: config.validation.timeoutMs, env: childEnv });
     const reviewer = new CommandIndependentReviewer({ command: config.review.command, args: config.review.args ?? [], timeoutMs: config.review.timeoutMs, env: childEnv });
     const executionRunner = new ExecutionRunner({ attemptStore, agent, repoPath: config.git.repoPath, workspacesDir: join(dir, "workspaces") });
@@ -235,6 +270,7 @@ export function buildProductionController(rawConfig, env = process.env, override
       heartbeatWorker: config.heartbeatWorker ?? !overrides.clock,
       runtimeFactory: (workPackage) => createWorkPackageRuntime({
         workPackage, directory: join(dir, "executions"), scope: lifecycle.scope(workPackage), leaseProvider, ownerId: config.workspaceId, agentExecutor: agent, executionRunner, clock,
+        runtimeOptions: runtimeOptionsFor(config.timings),
       }),
     });
     return { controller, close, agent, reviewer, validator, jira, lifecycle, executionRunner, leaseProvider, outboxExecutor, stores: { planStore, outboxStore, controllerStore, attemptStore, gateStore } };

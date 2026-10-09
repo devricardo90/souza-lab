@@ -3,7 +3,7 @@ import test, { after, before, beforeEach } from "node:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BIN, ENV, TWO_TASKS, runProcess, startMock, workspace } from "./helpers/controller-harness.js";
-import { buildProductionController, childEnvironment, executableExists, validateProductionConfig, ProductionProfileError } from "../src/composition/production-profile.js";
+import { buildProductionController, runtimeOptionsFor, childEnvironment, executableExists, validateProductionConfig, ProductionProfileError } from "../src/composition/production-profile.js";
 import { buildControllerForProfile } from "../src/controller/profile-selector.js";
 import { scrubText, secretValues } from "../src/controller/log-redaction.js";
 import { JiraSyncClient } from "../src/adapters/jira-sync-client.js";
@@ -31,7 +31,7 @@ after(() => { mock.stop(); });
 beforeEach(() => { if (ws) ws.cleanup(); ws = workspace(); ws.setPlan(TWO_TASKS()); });
 after(() => { if (ws) ws.cleanup(); });
 
-// Existing executables that are never invoked by these tests: the agent is the current node binary, the reviewer is "node" found on PATH.
+// Existing executables that are never invoked by these tests: the agent is the current node binary, the reviewer is "git" found on PATH (a different real binary).
 const prodConfig = (extra = {}, site = "jira.example.invalid") => ({
   profile: "production", workspaceDir: join(ws.dir, "state"), workspaceId: "ws-prod", documentId: "doc-prod",
   planSource: { file: ws.planFile },
@@ -45,7 +45,7 @@ const prodConfig = (extra = {}, site = "jira.example.invalid") => ({
   github: { owner: "example", repo: "repo", baseBranch: "main", workflowIdentity: ".github/workflows/validate.yml" },
   agent: { kind: "hermes", command: process.execPath, board: "board-x", coderAssignee: "coder-x" },
   validation: { command: process.execPath, args: ["-e", "process.exit(0)"] },
-  review: { command: "node", args: ["-e", "process.exit(0)"] },
+  review: { command: "git", args: ["--version"] },
   ...extra,
 });
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -141,7 +141,6 @@ test("6. invalid configuration fails closed: profile, unknown or synthetic-only 
   rejects({ ...prodConfig(), crashAt: { point: "x" } }, PROD_ENV, /crashAt/);
   rejects({ ...prodConfig(), github: { ...prodConfig().github, fake: {} } }, PROD_ENV, /fake/);
   rejects({ ...prodConfig(), github: { ...prodConfig().github, live: true } }, PROD_ENV, /live/);
-  rejects({ ...prodConfig(), github: { ...prodConfig().github, maxCorrections: 3 } }, PROD_ENV, /maxCorrections/);
   rejects(withJira({ relationship: { linkTypeName: "Blocks" } }), PROD_ENV, /relationship/);
   rejects(withJira({ relationship: { ...SYNTHETIC_BLOCKS_RELATIONSHIP, extra: 1 } }), PROD_ENV, /extra/);
   rejects(withJira({ taskIdPattern: "([" }), PROD_ENV, /regular expression/);
@@ -179,6 +178,14 @@ test("6b. every optional value is type- and range-checked; nothing bad is silent
   // valid optionals are accepted
   const ok = build({ ...prodConfig(), timings: { instanceLeaseTtlMs: 5000, idlePollMs: 10 }, ownerId: "owner-1", outboxClaimTtlMs: 1000, heartbeatWorker: false, exitOnCompleted: true, passEnv: ["MY_OPTIONAL_VAR"] });
   ok.close();
+});
+
+test("6b-2. the per-action timeout is configurable and bounded; unset keeps the runtime defaults; the lease always outlives the longest action", () => {
+  assert.deepEqual(runtimeOptionsFor({}), {});
+  assert.deepEqual(runtimeOptionsFor(undefined), {});
+  assert.deepEqual(runtimeOptionsFor({ actionTimeoutMs: 1800000 }), { timeoutMs: 1800000, leaseTtlMs: 2100000 });
+  for (const bad of [0, 999, 14400001, "x", 1.5]) rejects({ ...prodConfig(), timings: { actionTimeoutMs: bad } }, PROD_ENV, /actionTimeoutMs/);
+  for (const ok of [1000, 1800000, 14400000]) build({ ...prodConfig(), workspaceDir: join(ws.dir, `state-at-${ok}`), timings: { actionTimeoutMs: ok } }).close();
 });
 
 test("6c. plain http is allowed only for a loopback endpoint (credentials never cross a network in cleartext)", () => {
@@ -231,6 +238,19 @@ test("6e. the reviewer must not be the same executable as the implementing agent
   rejects({ ...prodConfig(), review: { command: process.execPath } }, PROD_ENV, /independent/);
 });
 
+test("6e-2. independence is judged on the resolved binary, not the spelling: the same executable by name and by full path is rejected; maxCorrections is bounded; the executor kind is a registry", () => {
+  assert.throws(() => buildProductionController({ ...prodConfig(), review: { command: "node" } }, PROD_ENV), (error) => error.code === "CONFIG_INVALID" && /same executable/.test(error.message));
+  assert.ok(!existsSync(join(ws.dir, "state")), "no state is created");
+  for (const bad of [0, 11, 1.5, "3", -1]) rejects({ ...prodConfig(), github: { ...prodConfig().github, maxCorrections: bad } }, PROD_ENV, /maxCorrections/);
+  for (const ok of [1, 3, 10]) build({ ...prodConfig(), workspaceDir: join(ws.dir, `state-mc-${ok}`), github: { ...prodConfig().github, maxCorrections: ok } }).close();
+  const built = build({ ...prodConfig(), workspaceDir: join(ws.dir, "state-mc-wired"), github: { ...prodConfig().github, maxCorrections: 2 } });
+  try { assert.equal(built.lifecycle.maxCorrections, 2, "the configured bound reaches the lifecycle"); } finally { built.close(); }
+  const defaulted = build({ ...prodConfig(), workspaceDir: join(ws.dir, "state-mc-default") });
+  try { assert.equal(defaulted.lifecycle.maxCorrections, 3, "the default bound is 3"); } finally { defaulted.close(); }
+  rejects({ ...prodConfig(), agent: { ...prodConfig().agent, kind: "someone-else" } }, PROD_ENV, /one of: hermes/);
+  rejects({ ...prodConfig(), agent: { kind: "hermes", command: process.execPath } }, PROD_ENV, /agent.board|required/);
+});
+
 test("7. Google is not required: no Google key or credential is needed, and a Google option is not accepted", () => {
   const env = { ...PROD_ENV }; for (const name of Object.keys(env)) assert.ok(!/google/i.test(name));
   const built = build(prodConfig(), env); built.close();
@@ -260,6 +280,7 @@ test("8. secrets never appear in errors or validation messages, and child proces
   try {
     assert.ok(!JSON.stringify(built.validator.env).includes(SECRET));
     assert.ok(!JSON.stringify(built.reviewer.env).includes(SECRET));
+    assert.ok(!JSON.stringify(built.agent.env).includes(SECRET) && !Object.keys(built.agent.env).some((n) => /^LOOP_JIRA_/.test(n)), "the Hermes CLI is started with the allowlisted environment too");
     assert.ok(!Object.keys(built.reviewer.env).some((name) => /^LOOP_JIRA_/.test(name)));
   } finally { built.close(); }
 });
